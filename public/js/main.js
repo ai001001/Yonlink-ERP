@@ -12,7 +12,7 @@
     ['一期 · 基础档案', [['系统权限管理', '#/system', 'system'], ['部门', '#/e/department', 'hr'], ['员工档案', '#/e/employee', 'hr'],
       ['供应商', '#/e/supplier', 'supplier'], ['历史供货价格', '#/e/supplier_price', 'supplier'], ['服务机构', '#/e/agency', 'agency'], ['机构对接记录', '#/e/agency_record', 'agency'],
       ['客户档案', '#/e/customer', 'customer'], ['客户跟进/询盘', '#/e/customer_follow', 'customer']]],
-    ['二期 · 外贸开发', [['业务邮件', '#/e/mail', 'mail'], ['样品档案', '#/e/sample', 'sample'], ['改样日志', '#/e/sample_revision', 'sample'],
+    ['二期 · 外贸开发', [['业务邮件', '#/mails', 'mail'], ['邮箱账户', '#/mail-accounts', 'mail'], ['样品档案', '#/e/sample', 'sample'], ['改样日志', '#/e/sample_revision', 'sample'],
       ['币种汇率', '#/e/currency', 'trade'], ['汇率波动记录', '#/e/rate_history', 'trade'], ['贸易术语', '#/e/trade_term', 'trade'],
       ['报价单', '#/quotes', 'quote'], ['工厂询价台账', '#/inquiries', 'quote:noDesigner'], ['送样单', '#/sends', 'sendsample']]],
     ['三期 · 订单出货', [['销售订单', '#/orders', 'order'], ['出货台账', '#/shipments', 'order']]],

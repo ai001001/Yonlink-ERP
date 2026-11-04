@@ -13,12 +13,13 @@ const port = Number(portIdx >= 0 ? args[portIdx + 1] : process.env.PORT || 8080)
 const dbFile = process.env.ERP_DB || path.join(__dirname, '..', 'data', 'erp.db');
 const resetOnly = args.includes('--reset-only');
 
-const { server, db } = createApp({ dbFile, reset: args.includes('--reset') || resetOnly });
+const { server, db, config } = createApp({ dbFile, reset: args.includes('--reset') || resetOnly });
 if (resetOnly) {
   db.close();
   console.log('数据库已重置为演示数据 / Database reset to demo data:', dbFile);
   process.exit(0);
 }
+if (!args.includes('--no-scheduler')) require('./scheduler').startScheduler(db, config);
 server.listen(port, '0.0.0.0', () => {
   console.log(`陶瓷工贸外贸ERP已启动 / ERP running: http://localhost:${port}`);
   console.log(`数据库 / database: ${dbFile}`);

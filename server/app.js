@@ -6,6 +6,8 @@
  */
 const http = require('node:http');
 const path = require('node:path');
+const fs = require('node:fs');
+const crypto = require('node:crypto');
 const { Router, HttpError, readBody, sendJson, sendFile, serveStatic } = require('./http');
 const { openDb } = require('./db');
 const { loadUser } = require('./routes/base');
@@ -19,8 +21,9 @@ const PUBLIC_DIR = path.join(__dirname, '..', 'public');
  */
 function createApp(opts = {}) {
   const db = openDb(opts.dbFile || ':memory:', { reset: opts.reset });
+  const config = { secret: opts.secret || loadSecret(opts.dbFile) };
   const router = new Router();
-  for (const m of ['base', 'sales', 'orders', 'finance', 'reports']) require(`./routes/${m}`).register(router);
+  for (const m of ['base', 'sales', 'orders', 'finance', 'reports', 'integrations']) require(`./routes/${m}`).register(router);
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -37,7 +40,7 @@ function createApp(opts = {}) {
       const auth = req.headers.authorization || '';
       const token = auth.startsWith('Bearer ') ? auth.slice(7) : (url.searchParams.get('token') || '');
       const ctx = {
-        db, req, res, params: m.params, query: Object.fromEntries(url.searchParams), token,
+        db, config, req, res, params: m.params, query: Object.fromEntries(url.searchParams), token,
         ip: req.socket.remoteAddress, body: ['POST', 'PUT'].includes(req.method) ? await readBody(req) : {},
       };
       ctx.user = loadUser(db, token);
@@ -54,7 +57,21 @@ function createApp(opts = {}) {
       }
     }
   });
-  return { server, db, router };
+  return { server, db, router, config };
+}
+
+/**
+ * 读取或生成用于加密邮箱密码的系统密钥（环境变量 ERP_SECRET_KEY 优先，其次 data/secret.key）
+ * Load or create the system secret used to encrypt mailbox passwords (env ERP_SECRET_KEY first, then data/secret.key).
+ * @param {string} [dbFile] 数据库文件 / database file
+ * @returns {string}
+ */
+function loadSecret(dbFile) {
+  if (process.env.ERP_SECRET_KEY) return process.env.ERP_SECRET_KEY;
+  if (!dbFile || dbFile === ':memory:') return crypto.randomBytes(32).toString('hex');
+  const file = path.join(path.dirname(dbFile), 'secret.key');
+  if (!fs.existsSync(file)) fs.writeFileSync(file, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
+  return fs.readFileSync(file, 'utf8').trim();
 }
 
 module.exports = { createApp };

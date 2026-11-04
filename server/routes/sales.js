@@ -201,7 +201,7 @@ function saveQuote(ctx, id) {
  * @returns {object}
  */
 function getInquiry(ctx, id) {
-  const inq = ctx.db.prepare(`SELECT i.*, q.quote_no, q.customer_id, q.salesman_id, s.name supplier_name, s.contact supplier_contact, s.phone supplier_phone, s.settlement, s.code supplier_code
+  const inq = ctx.db.prepare(`SELECT i.*, q.quote_no, q.customer_id, q.salesman_id, s.name supplier_name, s.contact supplier_contact, s.phone supplier_phone, s.email supplier_email, s.settlement, s.code supplier_code
     FROM inquiries i JOIN quotes q ON q.id=i.quote_id LEFT JOIN suppliers s ON s.id=i.supplier_id WHERE i.id=?`).get(id);
   if (!inq) throw new HttpError(404, '询价单不存在');
   if (ctx.user.scope === 'own' && inq.salesman_id !== ctx.user.employee_id) throw new HttpError(403, '无权查看该询价单');
@@ -703,4 +703,4 @@ function register(r) {
   });
 }
 
-module.exports = { register, docScope, filterItemsForDesigner, syncItems, priceQuote, inquiryXlsx };
+module.exports = { register, docScope, filterItemsForDesigner, syncItems, priceQuote, inquiryXlsx, getInquiry };

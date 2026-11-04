@@ -6,7 +6,7 @@
  */
 (() => {
   /** 演示数据版本，结构变化时递增以重置旧数据 / bump to reset stored demo data after schema changes */
-  const DEMO_VERSION = '1';
+  const DEMO_VERSION = '2';
   const IDB_NAME = 'yonlink-erp-demo';
   const cache = {};
 
@@ -95,11 +95,12 @@
       console.warn('无法读取浏览器存储，将使用临时数据', e);
     }
     globalThis.__SQL_DB = data ? new SQL.Database(data) : new SQL.Database();
+    globalThis.__ERP_DEMO = true;
     const http = load('server/http.js');
     HttpError = http.HttpError;
     db = load('server/db.js').openDb(':memory:');
     router = new http.Router();
-    for (const m of ['base', 'sales', 'orders', 'finance', 'reports']) load(`server/routes/${m}.js`).register(router);
+    for (const m of ['base', 'sales', 'orders', 'finance', 'reports', 'integrations']) load(`server/routes/${m}.js`).register(router);
     loadUser = load('server/routes/base.js').loadUser;
     if (!data) {
       await saveNow();
@@ -143,7 +144,7 @@
       if (['POST', 'PUT'].includes(method) && bodyText) {
         try { body = JSON.parse(bodyText); } catch { throw new HttpError(400, '请求数据格式错误（需要 JSON）'); }
       }
-      const ctx = { db, params: m.params, query: Object.fromEntries(url.searchParams), token, ip: 'browser', body };
+      const ctx = { db, config: { secret: 'browser-demo' }, params: m.params, query: Object.fromEntries(url.searchParams), token, ip: 'browser', body };
       ctx.user = loadUser(db, token);
       if (!m.opts.public && !ctx.user) throw new HttpError(401, '登录已失效，请重新登录');
       const result = await m.handler(ctx);

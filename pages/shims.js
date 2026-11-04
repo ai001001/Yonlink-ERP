@@ -17,7 +17,18 @@ class Buffer extends Uint8Array {
    * @param {string|ArrayLike<number>} v
    * @returns {Buffer}
    */
-  static from(v) {
+  static from(v, enc) {
+    if (typeof v === 'string' && enc === 'base64') {
+      const bin = atob(v.replace(/[^A-Za-z0-9+/=]/g, ''));
+      const out = new Buffer(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    }
+    if (typeof v === 'string' && (enc === 'latin1' || enc === 'binary')) {
+      const out = new Buffer(v.length);
+      for (let i = 0; i < v.length; i++) out[i] = v.charCodeAt(i) & 0xff;
+      return out;
+    }
     const src = typeof v === 'string' ? new TextEncoder().encode(v) : v;
     const out = new Buffer(src.length);
     out.set(src);
@@ -54,6 +65,12 @@ class Buffer extends Uint8Array {
   /** @param {string} [enc] 'hex' 或 utf8 / 'hex' or utf8 */
   toString(enc) {
     if (enc === 'hex') return Array.from(this, (x) => x.toString(16).padStart(2, '0')).join('');
+    if (enc === 'base64') {
+      let bin = '';
+      for (let i = 0; i < this.length; i += 0x8000) bin += String.fromCharCode.apply(null, this.subarray(i, i + 0x8000));
+      return btoa(bin);
+    }
+    if (enc === 'latin1' || enc === 'binary') return Array.from(this, (x) => String.fromCharCode(x)).join('');
     return new TextDecoder().decode(this);
   }
 }
@@ -197,4 +214,8 @@ const NODE_SHIMS = {
   'node:sqlite': { DatabaseSync },
   'node:fs': {},
   'node:path': {},
+  // 浏览器无法建立 TCP 连接：邮件收发在演示版中被 __ERP_DEMO 拦截 / no raw TCP in browsers; mail is blocked by __ERP_DEMO
+  'node:net': {},
+  'node:tls': {},
+  'node:dns': {},
 };

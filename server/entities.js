@@ -36,7 +36,7 @@ const ENTITIES = {
     fields: [
       f('code', '编码', { required: true }), f('name', '名称', { required: true }),
       f('type', '类型', { type: 'select', options: ['原辅材料供应商', '成品生产工厂', '外购成品供应商'], required: true }),
-      f('contact', '联系人'), f('phone', '电话'), f('address', '地址', { list: false }), f('settlement', '结算方式'),
+      f('contact', '联系人'), f('phone', '电话'), f('email', '邮箱（询价单邮件发送）', { list: false }), f('address', '地址', { list: false }), f('settlement', '结算方式'),
       f('item_range', '生产货号/品类范围'), f('rating', '评级', { type: 'select', options: RATING }),
       f('pass_rate', '供货合格率%', { type: 'number' }), f('qualification', '资质说明', { type: 'textarea', list: false }),
       f('remark', '备注', { type: 'textarea', list: false }),
@@ -86,7 +86,7 @@ const ENTITIES = {
   },
   mail: {
     module: 'mail', table: 'mails', title: '业务邮件', order: 'id DESC', search: ['subject', 'mail_from', 'mail_to', 'body'],
-    scope: { own: '(customer_id IS NULL OR customer_id IN (SELECT id FROM customers WHERE salesman_id = :emp))' },
+    scope: { own: '(account_id IN (SELECT id FROM mail_accounts WHERE owner_user_id = :uid) OR customer_id IN (SELECT id FROM customers WHERE salesman_id = :emp) OR (account_id IS NULL AND customer_id IS NULL))' },
     fields: [
       f('direction', '方向', { type: 'select', options: ['收件', '发件'], required: true }),
       f('mail_from', '发件人', { required: true }), f('mail_to', '收件人', { required: true }), f('subject', '主题', { required: true }),
@@ -94,7 +94,7 @@ const ENTITIES = {
       f('body', '正文', { type: 'textarea', list: false }),
       f('customer_id', '绑定客户', { type: 'ref', ref: 'customer' }), f('sample_id', '绑定样品', { type: 'ref', ref: 'sample' }),
       f('quote_id', '绑定报价单', { type: 'ref', ref: 'quote', list: false }), f('order_id', '绑定订单', { type: 'ref', ref: 'order', list: false }),
-      f('created_at', '时间', { readonly: true }),
+      f('status', '状态', { readonly: true }), f('created_at', '时间', { readonly: true }),
     ],
   },
   sample: {

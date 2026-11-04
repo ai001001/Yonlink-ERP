@@ -120,6 +120,12 @@ CREATE TABLE IF NOT EXISTS material_issues (id INTEGER PRIMARY KEY, inventory_id
 CREATE TABLE IF NOT EXISTS productions (id INTEGER PRIMARY KEY, prod_no TEXT UNIQUE, order_id INTEGER, order_item_id INTEGER, item_no TEXT, plan_qty INTEGER, start_date TEXT, due_date TEXT, status TEXT DEFAULT '生产中', remark TEXT);
 CREATE TABLE IF NOT EXISTS production_reports (id INTEGER PRIMARY KEY, production_id INTEGER, process TEXT, report_date TEXT, qty INTEGER, good_qty INTEGER, bad_qty INTEGER, worker TEXT, remark TEXT);
 
+CREATE TABLE IF NOT EXISTS mail_accounts (id INTEGER PRIMARY KEY, email TEXT UNIQUE, display_name TEXT, owner_user_id INTEGER,
+  smtp_host TEXT, smtp_port INTEGER, smtp_secure TEXT DEFAULT 'ssl', imap_host TEXT, imap_port INTEGER, imap_secure TEXT DEFAULT 'ssl',
+  username TEXT, password_enc TEXT, tls_reject_unauthorized INTEGER DEFAULT 1, enabled INTEGER DEFAULT 1, auto_fetch INTEGER DEFAULT 1,
+  uidvalidity INTEGER, last_uid INTEGER DEFAULT 0, last_fetch_at TEXT, last_error TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
+CREATE TABLE IF NOT EXISTS files (id INTEGER PRIMARY KEY, name TEXT, mime TEXT, size INTEGER, data BLOB, owner_type TEXT, owner_id INTEGER, created_by TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
+
 CREATE TABLE IF NOT EXISTS approvals (id INTEGER PRIMARY KEY, target_type TEXT, target_id INTEGER, target_no TEXT, title TEXT, status TEXT DEFAULT '待审批', applicant TEXT, approver TEXT, note TEXT, created_at TEXT DEFAULT (datetime('now','localtime')), decided_at TEXT);
 `;
 
@@ -212,7 +218,7 @@ function seed(db) {
     ['S004', '厦门华美包装', '原辅材料供应商', '蔡经理', '0592-5600004', '月结30天', '彩盒/外箱', 'B', 99],
     ['S005', '佛山外购精品', '外购成品供应商', '冯总', '0757-8300005', '预付30%', '金属配件摆件', 'C', 92],
   ];
-  for (const s of sups) ins('INSERT INTO suppliers(code,name,type,contact,phone,settlement,item_range,rating,pass_rate) VALUES(?,?,?,?,?,?,?,?,?)', ...s);
+  for (const s of sups) ins('INSERT INTO suppliers(code,name,type,contact,phone,settlement,item_range,rating,pass_rate,email) VALUES(?,?,?,?,?,?,?,?,?,?)', ...s, `${s[0].toLowerCase()}@supplier.example.com`);
 
   const ags = [
     ['泉州意匠设计工作室', '产品设计机构', '谢设计', '13900000001', '单款800-2000元', 7, 'A'],
@@ -272,6 +278,40 @@ function seed(db) {
   ins("INSERT INTO settings(key,value) VALUES('company_name_en','YONLINK CERAMIC CRAFTS CO., LTD.')");
 }
 
+/** 新增字段（旧库自动补齐）/ Columns added after v1, auto-added to older databases */
+const ADDED_COLUMNS = [
+  ['suppliers', 'email', 'TEXT'],
+  ['mails', 'account_id', 'INTEGER'],
+  ['mails', 'mail_cc', 'TEXT'],
+  ['mails', 'status', 'TEXT'],
+  ['mails', 'error', 'TEXT'],
+  ['mails', 'message_id', 'TEXT'],
+  ['mails', 'uid', 'INTEGER'],
+  ['mails', 'mail_date', 'TEXT'],
+  ['mails', 'attachments', 'TEXT'],
+];
+
+/** 新增系统参数默认值 / Default values for settings added after v1 */
+const DEFAULT_SETTINGS = {
+  rate_api_url: 'https://open.er-api.com/v6/latest/CNY',
+  rate_auto_hours: '24',
+  rate_max_change: '30',
+  mail_fetch_minutes: '10',
+  mail_initial_sync: '50',
+};
+
+/**
+ * 数据库结构升级：补字段、补参数 / Schema migration: add missing columns and settings.
+ * @param {DatabaseSync} db
+ */
+function migrate(db) {
+  for (const [table, col, type] of ADDED_COLUMNS) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+  }
+  for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) db.prepare('INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)').run(k, v);
+}
+
 /**
  * 打开数据库（不存在则建表并写入演示数据）
  * Open the database, creating schema and seed data on first run.
@@ -287,6 +327,7 @@ function openDb(file, opts = {}) {
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=OFF;');
   db.exec(SCHEMA);
+  migrate(db);
   const has = db.prepare('SELECT COUNT(*) c FROM modules').get().c;
   if (!has) {
     db.exec('BEGIN');

@@ -55,13 +55,37 @@
           ${canAdd ? '<button class="btn primary" id="add">＋ 新增</button>' : ''}
           ${can(ent.module, 'export') ? '<button class="btn" id="exp">导出Excel</button>' : ''}
           ${can(ent.module, 'print') ? '<button class="btn" id="prt">打印</button>' : ''}
+          ${key === 'currency' && can('trade', 'edit') ? '<button class="btn primary" id="autoRate">⟳ 自动更新汇率</button>' : ''}
         </div></div>
+      ${key === 'currency' ? '<div class="alert info" id="rateStatus">汇率来源加载中…</div>' : ''}
       ${ent.readonly ? '<div class="alert info">此台账由系统根据业务自动生成，只读。</div>' : ''}
       ${tableHtml(headers, rows)}
       <div class="pager"><span>第 ${page}/${pages} 页</span>
         <button class="btn small" ${page <= 1 ? 'disabled' : ''} data-page="${page - 1}">上一页</button>
         <button class="btn small" ${page >= pages ? 'disabled' : ''} data-page="${page + 1}">下一页</button></div></div>`;
     const go = (p, qq) => { location.hash = `#/e/${key}?page=${p}&q=${encodeURIComponent(qq ?? q)}${extra}`; };
+    if (key === 'currency') {
+      get('/api/rates/status').then((st) => {
+        const el = main.querySelector('#rateStatus');
+        if (el) el.textContent = `最近自动更新：${st.last || '尚未更新'}　来源：${st.source || st.api}　自动更新周期：${Number(st.hours) ? `每${st.hours}小时` : '已关闭'}　单次波动超过${st.max_change}%不自动采用（可在 系统权限管理→系统参数 中修改）`;
+      }).catch(() => {});
+      const ar = main.querySelector('#autoRate');
+      if (ar) {
+        ar.onclick = async () => {
+          ar.disabled = true;
+          try {
+            const r = await post('/api/rates/update');
+            modal({
+              title: '汇率更新结果', body: `<p class="small muted">来源：${esc(r.source)}　数据时间：${esc(r.date)}</p>
+                ${r.updated.length || r.skipped.length ? tableHtml(['币种', '原汇率', '新汇率', '结果'], [...r.updated.map((x) => [esc(x.code), x.old, x.new, tag('已更新')]), ...r.skipped.map((x) => [esc(x.code), x.old ?? '', x.new ?? '', `<span class="tag warn">${esc(x.reason)}</span>`])]) : '<div class="alert info">汇率已是最新，无需更新。</div>'}
+                ${r.unchanged ? `<p class="small muted">${r.unchanged} 个币种汇率无变化</p>` : ''}`,
+            });
+            ERP.clearOptions();
+            ERP.navigate();
+          } catch (e) { toast(e.message, 'error'); ar.disabled = false; }
+        };
+      }
+    }
     main.querySelector('#q').onkeydown = (e) => { if (e.key === 'Enter') go(1, e.target.value.trim()); };
     main.querySelectorAll('[data-page]').forEach((b) => { b.onclick = () => go(b.dataset.page); });
     const plain = data.rows.map((r) => cols.map((f) => (f.type === 'ref' ? r[f.name + '_label'] ?? '' : r[f.name] ?? '')));
@@ -145,12 +169,36 @@
         <div><b>外箱(cm)</b><span>${s.outer_l ? `${s.outer_l}×${s.outer_w}×${s.outer_h}，${s.pcs_per_carton}只/箱` : ''}</span></div><div><b>MOQ</b><span>${esc(s.moq)}</span></div>
         <div><b>原货号</b><span>${s.parent_no ? esc(s.parent_no) : '-'}</span></div>
       </div>
-      ${imgs.length ? `<div class="toolbar" style="margin-top:10px">${imgs.map((u) => `<img src="${esc(u)}" alt="样品图片" style="height:110px;border-radius:6px;border:1px solid var(--line)">`).join('')}</div>` : ''}</div>
+      <div class="panel-head" style="margin:14px 0 6px"><h3>样品图片 <span class="muted small">${imgs.length} 张</span></h3>
+        ${can('sample', 'edit') ? '<label class="btn small">＋ 上传图片<input type="file" id="upl" accept="image/*" multiple hidden></label>' : ''}</div>
+      <div class="gallery">${imgs.length ? imgs.map((u) => `<figure><img data-ref="${esc(u)}" alt="样品图片" loading="lazy">
+        ${can('sample', 'edit') && u.startsWith('file:') ? `<button class="btn small danger" data-delimg="${esc(u.slice(5))}" title="删除">✕</button>` : ''}</figure>`).join('') : '<div class="muted small">暂无图片（可上传多角度样品照片，自动压缩）</div>'}</div></div>
       ${sec('改样日志', ['时间', '阶段', '内容', '记录人'], d.revisions.map((x) => [esc(x.created_at), tag(x.stage), esc(x.content), esc(x.user_name)]))}
       ${d.quotes ? sec('报价记录', ['报价单号', '客户', '数量', '单价', '新货号', '状态'], d.quotes.map((x) => [`<a href="#/quote/${x.quote_id}">${esc(x.quote_no)}</a>`, esc(x.customer_name), esc(x.qty), `${money(x.price)} ${esc(x.currency)}`, esc(x.new_item_no), tag(x.status)])) : ''}
       ${d.sends ? sec('送样记录', ['送样单号', '客户', '数量', '新货号', '状态'], d.sends.map((x) => [`<a href="#/send/${x.send_id}">${esc(x.send_no)}</a>`, esc(x.customer_name), esc(x.qty), esc(x.new_item_no), tag(x.status)])) : ''}
       ${d.orders ? sec('订单记录', ['订单号', '客户', '数量', '单价', '状态'], d.orders.map((x) => [`<a href="#/order/${x.order_id}">${esc(x.order_no)}</a>`, esc(x.customer_name), esc(x.qty), `${money(x.unit_price)} ${esc(x.currency)}`, tag(x.status)])) : ''}
       <div class="panel"><h3 class="section-title">送样转化率</h3><div class="kv"><div><b>送样次数</b><span>${d.stats.sends}</span></div><div><b>成交订单数</b><span>${d.stats.orders}</span></div><div><b>转化率</b><span>${d.stats.rate}</span></div></div></div>`;
+    ERP.loadImages(main);
+    main.querySelectorAll('.gallery img').forEach((im) => {
+      im.onclick = () => modal({ title: `${s.company_no} 样品图片`, wide: true, body: `<img src="${im.src}" alt="样品图片" style="max-width:100%;display:block;margin:auto">` });
+    });
+    const upl = main.querySelector('#upl');
+    if (upl) {
+      upl.onchange = async () => {
+        let n = 0;
+        for (const f of upl.files) {
+          try {
+            await post(`/api/samples/${id}/images`, { name: f.name, data: await ERP.compressImage(f) });
+            n++;
+          } catch (e) { toast(`${f.name}：${e.message}`, 'error'); }
+        }
+        if (n) toast(`已上传 ${n} 张图片`, 'ok');
+        ERP.navigate();
+      };
+    }
+    main.querySelectorAll('[data-delimg]').forEach((b) => {
+      b.onclick = async () => { if (await confirmBox('删除这张图片？')) { await del(`/api/samples/${id}/images/${b.dataset.delimg}`); toast('已删除', 'ok'); ERP.navigate(); } };
+    });
     const rb = main.querySelector('#rev');
     if (rb) {
       rb.onclick = async () => modal({
@@ -251,7 +299,12 @@
       const s = await get('/api/settings');
       body.innerHTML = `<div class="form-grid"><label><span>公司中文名</span><input name="company_name" value="${esc(s.company_name)}"></label>
         <label><span>公司英文名</span><input name="company_name_en" value="${esc(s.company_name_en)}"></label>
-        <label><span>报价最低利润率%（低于则审批预警）</span><input name="quote_min_profit" type="number" value="${esc(s.quote_min_profit)}"></label></div>
+        <label><span>报价最低利润率%（低于则审批预警）</span><input name="quote_min_profit" type="number" value="${esc(s.quote_min_profit)}"></label>
+        <label class="wide"><span>汇率接口地址（失败时自动切换备用接口）</span><input name="rate_api_url" value="${esc(s.rate_api_url)}"></label>
+        <label><span>汇率自动更新周期（小时，0=关闭）</span><input name="rate_auto_hours" type="number" value="${esc(s.rate_auto_hours)}"></label>
+        <label><span>汇率异常波动阈值%（超过不自动采用）</span><input name="rate_max_change" type="number" value="${esc(s.rate_max_change)}"></label>
+        <label><span>自动收信间隔（分钟，0=关闭）</span><input name="mail_fetch_minutes" type="number" value="${esc(s.mail_fetch_minutes)}"></label>
+        <label><span>新邮箱首次同步最近邮件数</span><input name="mail_initial_sync" type="number" value="${esc(s.mail_initial_sync)}"></label></div>
         ${editable ? '<div style="margin-top:12px"><button class="btn primary" id="saveSet">保存参数</button></div>' : ''}`;
       const sb = body.querySelector('#saveSet');
       if (sb) sb.onclick = async () => { await put('/api/settings', readForm(body)); toast('参数已保存', 'ok'); await ERP.reloadMeta(); };

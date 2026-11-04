@@ -4,7 +4,7 @@
  * Sales pages: quotations, factory inquiries, sample sending & new item numbers.
  */
 (() => {
-  const { esc, money, get, post, put, del, toast, modal, tableHtml, tag, can, route, setTitle, exportTable, printHtml, confirmBox, optHtml, options, download } = ERP;
+  const { esc, money, get, post, put, del, toast, modal, tableHtml, tag, can, route, setTitle, exportTable, printHtml, confirmBox, optHtml, options, download, readForm } = ERP;
 
   /**
    * 单据页脚：左下新创货号、右下改样要求 / Document footer: new item numbers (left) & revision requirements (right).
@@ -241,6 +241,7 @@
     main.innerHTML = `<div class="panel"><div class="panel-head"><h2>${esc(inq.inquiry_no)} ${tag(inq.status)}</h2><div class="toolbar">
         ${ed && inq.status === '待发送' ? '<button class="btn" id="sent">标记已发送厂家</button>' : ''}
         ${can('quote', 'export') ? '<button class="btn" data-exp="cm">导出询价单(厘米版)</button><button class="btn" data-exp="inch">导出询价单(英寸版)</button>' : ''}
+        ${ed && can('mail', 'add') ? '<button class="btn primary" id="mailInq">✉ 邮件发送给厂家</button>' : ''}
         <a class="btn" href="#/quote/${inq.quote_id}">返回报价单</a></div></div>
       <div class="kv"><div><b>报价单号</b><span>${esc(inq.quote_no)}</span></div><div><b>厂家</b><span>${esc(inq.supplier_name)}</span></div><div><b>联系人</b><span>${esc(inq.supplier_contact)} ${esc(inq.supplier_phone)}</span></div>
         <div><b>结算方式</b><span>${esc(inq.settlement)}</span></div><div><b>发送时间</b><span>${esc(inq.sent_at)}</span></div><div><b>创建</b><span>${esc(inq.created_at)}</span></div></div></div>
@@ -259,6 +260,27 @@
     main.querySelectorAll('[data-exp]').forEach((b) => { b.onclick = () => download(`/api/inquiries/${id}/export?unit=${b.dataset.exp}`).catch((e) => toast(e.message, 'error')); });
     const sb = main.querySelector('#sent');
     if (sb) sb.onclick = async () => { await post(`/api/inquiries/${id}/sent`); toast('已标记发送', 'ok'); ERP.navigate(); };
+    const mi = main.querySelector('#mailInq');
+    if (mi) {
+      mi.onclick = async () => {
+        const { rows: accounts } = await get('/api/mail-accounts').catch((e) => { toast(e.message, 'error'); return { rows: null }; });
+        if (!accounts) return;
+        const usable = accounts.filter((a) => a.enabled);
+        if (!usable.length) { toast('请先在「邮箱账户」中添加发件邮箱', 'error'); return; }
+        const sup = { email: inq.supplier_email || '' };
+        modal({
+          title: `邮件发送询价单给 ${inq.supplier_name}`, wide: true,
+          body: `<div class="form-grid"><label><span class="req">发件邮箱</span><select name="account_id">${optHtml(usable.map((a) => ({ id: a.id, label: a.email })), usable[0].id, false)}</select></label>
+            <label><span class="req">厂家邮箱</span><input name="to" value="${esc(sup.email)}" placeholder="供应商档案未登记邮箱，请填写"></label>
+            <label><span>抄送</span><input name="cc"></label>
+            <label><span>附件模板</span><select name="unit">${optHtml([{ id: 'cm', label: '厘米版 Excel' }, { id: 'inch', label: '英寸版 Excel' }], 'cm', false)}</select></label>
+            <label class="wide"><span>主题</span><input name="subject" value="询价单 ${esc(inq.inquiry_no)}"></label>
+            <label class="wide"><span>正文（留空使用默认模板）</span><textarea name="body"></textarea></label></div>
+            <p class="small muted">发送成功后询价单自动标记为「已发送」，邮件归档到业务邮件并关联报价单。</p>`,
+          buttons: [{ text: '发送', cls: 'primary', onClick: async (m) => { await post(`/api/inquiries/${id}/email`, readForm(m.el)); m.close(); toast('询价单已通过邮件发送给厂家', 'ok'); ERP.navigate(); } }],
+        });
+      };
+    }
     const sv = main.querySelector('#save');
     if (sv) {
       sv.onclick = async () => {

@@ -122,7 +122,7 @@ const ERP = (() => {
       <div class="modal-foot"></div></div>`;
     const m = { el: mask.querySelector('.modal'), close: () => mask.remove() };
     const foot = mask.querySelector('.modal-foot');
-    const all = [...buttons, { text: '取消', onClick: () => m.close() }];
+    const all = [...buttons, { text: buttons.length ? '取消' : '关闭', onClick: () => m.close() }];
     for (const b of all) {
       const btn = document.createElement('button');
       btn.className = 'btn ' + (b.cls || '');
@@ -327,7 +327,61 @@ const ERP = (() => {
       <span><span class="bar" style="display:block;width:${(Math.abs(Number(d.value) || 0) / max) * 100}%"></span></span><span class="val">${money(d.value)}</span></div>`).join('')}</div>`;
   }
 
+  const blobCache = {};
+  /**
+   * 加载需要登录的图片（file:ID）或外链图片 / Load images that need auth (file:ID) or external links.
+   * @param {HTMLElement} root 含 img[data-ref] 的容器 / container with img[data-ref]
+   */
+  async function loadImages(root) {
+    for (const img of root.querySelectorAll('img[data-ref]')) {
+      const ref = img.dataset.ref;
+      if (!ref.startsWith('file:')) { img.src = ref; continue; }
+      try {
+        if (!blobCache[ref]) {
+          const res = await fetch('/api/files/' + ref.slice(5), { headers: { Authorization: 'Bearer ' + state.token } });
+          if (!res.ok) throw new Error();
+          blobCache[ref] = URL.createObjectURL(await res.blob());
+        }
+        img.src = blobCache[ref];
+      } catch {
+        img.alt = '图片加载失败';
+      }
+    }
+  }
+
+  /**
+   * 压缩图片为 JPEG（最长边不超过 maxSide）/ Downscale an image file to JPEG.
+   * @param {File} file
+   * @param {number} [maxSide]
+   * @returns {Promise<string>} dataURL
+   */
+  function compressImage(file, maxSide = 1600) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('读取文件失败'));
+      reader.onload = () => {
+        if (file.type === 'image/gif' || (file.size < 400 * 1024 && file.type !== 'image/bmp')) { resolve(reader.result); return; }
+        const img = new Image();
+        img.onerror = () => reject(new Error(`${file.name} 不是有效的图片`));
+        img.onload = () => {
+          const k = Math.min(1, maxSide / Math.max(img.width, img.height));
+          const c = document.createElement('canvas');
+          c.width = Math.round(img.width * k);
+          c.height = Math.round(img.height * k);
+          const g = c.getContext('2d');
+          g.fillStyle = '#fff';
+          g.fillRect(0, 0, c.width, c.height);
+          g.drawImage(img, 0, 0, c.width, c.height);
+          resolve(c.toDataURL('image/jpeg', 0.85));
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
   return {
+    loadImages, compressImage,
     state, esc, money, api, get, post, put, del, download, exportTable, toast, modal, confirmBox, options, clearOptions,
     optHtml, formHtml, readForm, tableHtml, tag, can, route, navigate, setTitle, printHtml, logout, barChart,
   };

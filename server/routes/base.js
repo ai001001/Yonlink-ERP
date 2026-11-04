@@ -46,7 +46,7 @@ function scopeClause(ctx, scopeDef, alias = '') {
   const s = scopeDef && scopeDef[ctx.user.scope];
   if (!s) return { sql: '', params: [] };
   const params = [];
-  let sql = s.replace(/:emp/g, () => { params.push(ctx.user.employee_id || -1); return '?'; });
+  let sql = s.replace(/:(emp|uid)/g, (_, k) => { params.push(k === 'uid' ? ctx.user.id : (ctx.user.employee_id || -1)); return '?'; });
   if (alias) sql = sql.replace(/^(\(?)(\w+)\b/, `$1${alias}.$2`);
   return { sql, params };
 }
