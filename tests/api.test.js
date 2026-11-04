@@ -442,6 +442,7 @@ test('TC-PR-02 生产订单变更风险等级：已报工 → 高，任务含生
   const r = await sales1.get(`/api/orders/${S.order.id}/risk`);
   assert.equal(r.data.level, '高');
   assert.ok(r.data.reasons.some((x) => x.includes('已完工良品')));
+  for (const p of r.data.productions) assert.ok(p.reported <= p.plan_qty, `完工数(${p.reported})不应超过计划数(${p.plan_qty})——模拟发现的缺陷S3`);
 });
 
 test('TC-INV-01 按单领料：库存不足拦截，成本归集到订单', async () => {
@@ -601,6 +602,21 @@ test('TC-SEC-01 搜索参数注入安全、未知接口404、错误JSON 400', as
   assert.equal((await admin.get('/api/nope')).status, 404);
   const bad = await fetch(srv.base + '/api/quotes', { method: 'POST', headers: { Authorization: 'Bearer ' + admin.token }, body: '{bad' });
   assert.equal(bad.status, 400);
+});
+
+test('TC-SH-02 旧货号锁定前已确认的订单可继续出货；锁定后的新订单仍被禁止（模拟发现的缺陷S1）', async () => {
+  const early = await sales2.post('/api/orders', { customer_id: 3, currency: 'EUR', delivery_date: '2027-02-01', items: [{ sample_id: 4, qty: 800, unit_price: 3.2 }] });
+  assert.equal(early.status, 200, JSON.stringify(early.data));
+  const send = await sales2.post('/api/sample-sends', { customer_id: 3, items: [{ sample_id: 4, qty: 1, new_item_no: 'YL-D001N', revise_req: '耳朵加长' }] });
+  const it = send.data.items[0];
+  await sales2.post(`/api/send-items/${it.id}/verify`, { pass: true });
+  srv.app.db.prepare("UPDATE orders SET created_at=datetime('now','localtime','-1 minute') WHERE id=?").run(early.data.id);
+  assert.equal((await manager.post(`/api/send-items/${it.id}/convert`)).status, 200);
+  assert.ok(srv.app.db.prepare('SELECT locked_at FROM samples WHERE id=4').get().locked_at, '记录锁定时间');
+  const sh = await sales2.post(`/api/orders/${early.data.id}/shipments`, { items: [{ order_item_id: early.data.items[0].id, qty: 800 }] });
+  assert.equal(sh.status, 200, '锁定前已确认的订单可出货：' + JSON.stringify(sh.data));
+  const late = await sales2.post('/api/orders', { customer_id: 3, currency: 'EUR', delivery_date: '2027-02-01', items: [{ sample_id: 4, qty: 10, unit_price: 3.2 }] });
+  assert.equal(late.status, 409, '锁定后不能再用旧货号下单');
 });
 
 test('TC-SEC-02 删除保护：被订单引用的客户/样品不能删除', async () => {

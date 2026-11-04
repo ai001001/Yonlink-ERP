@@ -688,13 +688,22 @@ function register(r) {
       const rr = ctx.db.prepare(`INSERT INTO samples(company_no,parent_no,progress,status,stock_qty,remark,${copy.join(',')}) VALUES(?,?,'已完成','正常',0,?,${copy.map(() => '?').join(',')})`)
         .run(it.new_item_no, old.company_no, `由${old.company_no}改样转正。改样要求：${it.revise_req || ''}`, ...vals);
       const nid = Number(rr.lastInsertRowid);
+      // 复制图片文件给新样品，避免新旧货号共用同一文件 / copy image files so old and new samples never share a file
+      const imgs = String(vals[copy.indexOf('images')] || '').split(/[,，\s]+/).filter(Boolean).map((ref) => {
+        if (!ref.startsWith('file:')) return ref;
+        const f = ctx.db.prepare("SELECT * FROM files WHERE id=? AND owner_type='sample'").get(Number(ref.slice(5)));
+        if (!f) return null;
+        const fid = ctx.db.prepare("INSERT INTO files(name,mime,size,data,owner_type,owner_id,created_by) VALUES(?,?,?,?,'sample',?,?)").run(f.name, f.mime, f.size, f.data, nid, ctx.user.name).lastInsertRowid;
+        return `file:${fid}`;
+      }).filter(Boolean);
+      ctx.db.prepare('UPDATE samples SET images=? WHERE id=?').run(imgs.join(','), nid);
       // 继承改样记录 / inherit revision history
       for (const rv of ctx.db.prepare('SELECT * FROM sample_revisions WHERE sample_id=? ORDER BY id').all(old.id)) {
         ctx.db.prepare('INSERT INTO sample_revisions(sample_id,stage,content,user_name,created_at) VALUES(?,?,?,?,?)').run(nid, rv.stage, `[继承自${old.company_no}] ${rv.content}`, rv.user_name, rv.created_at);
       }
       ctx.db.prepare("INSERT INTO sample_revisions(sample_id,stage,content,user_name) VALUES(?,'转正',?,?)").run(nid, `新货号转正归档，原货号${old.company_no}，改样要求：${it.revise_req || ''}`, ctx.user.name);
       ctx.db.prepare("INSERT INTO sample_revisions(sample_id,stage,content,user_name) VALUES(?,'转正',?,?)").run(old.id, `已被新货号【${it.new_item_no}】替代，旧货号锁定，禁止报价/下单/出货`, ctx.user.name);
-      ctx.db.prepare("UPDATE samples SET status='已锁定' WHERE id=?").run(old.id);
+      ctx.db.prepare("UPDATE samples SET status='已锁定', locked_at=datetime('now','localtime') WHERE id=?").run(old.id);
       ctx.db.prepare('UPDATE sample_send_items SET new_sample_id=? WHERE id=?').run(nid, it.id);
       return nid;
     });

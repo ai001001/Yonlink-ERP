@@ -375,6 +375,21 @@ test('TC-IMG-03 图片权限：设计师可看本人样品图片、看不到他�
   assert.equal((await sales1.get('/api/files/' + S.img)).status, 200, '业务员可查看样品图片');
 });
 
+test('TC-IMG-05 改样转正：新样品获得独立的图片副本，删除旧图不影响新样品（模拟发现的缺陷S2）', async () => {
+  const up = await admin.post('/api/samples/2/images', { name: '梅瓶.png', data: PNG.toString('base64') });
+  const send = await sales1.post('/api/sample-sends', { customer_id: 1, items: [{ sample_id: 2, qty: 1, new_item_no: 'YL-V002Z', revise_req: '改色' }] });
+  await sales1.post(`/api/send-items/${send.data.items[0].id}/verify`, { pass: true });
+  const conv = await admin.post(`/api/send-items/${send.data.items[0].id}/convert`, {});
+  assert.equal(conv.status, 200, JSON.stringify(conv.data));
+  const ns = (await admin.get('/api/e/sample/' + conv.data.id)).data;
+  const ref = ns.images.split(',').find((x) => x.startsWith('file:'));
+  assert.ok(ref && ref !== `file:${up.data.file_id}`, '新样品引用独立文件');
+  await admin.del(`/api/samples/2/images/${up.data.file_id}`);
+  const f = await admin.get('/api/files/' + ref.slice(5));
+  assert.equal(f.status, 200);
+  assert.ok(Buffer.compare(f.data, PNG) === 0);
+});
+
 test('TC-IMG-04 删除图片：从样品移除且文件删除；不能删除其它样品的图片', async () => {
   assert.equal((await admin.del(`/api/samples/2/images/${S.img}`)).status, 404);
   const r = await admin.del(`/api/samples/1/images/${S.img}`);

@@ -6,9 +6,10 @@
  */
 (() => {
   /** 演示数据版本，结构变化时递增以重置旧数据 / bump to reset stored demo data after schema changes */
-  const DEMO_VERSION = '2';
+  const DEMO_VERSION = '3';
   const IDB_NAME = 'yonlink-erp-demo';
   const cache = {};
+  const nativeFetch = window.fetch.bind(window);
 
   /**
    * 解析相对路径 / Resolve a relative module path.
@@ -94,6 +95,16 @@
     } catch (e) {
       console.warn('无法读取浏览器存储，将使用临时数据', e);
     }
+    let fromDemo = false;
+    if (!data) {
+      // 首次打开：载入构建时生成的半年模拟业务数据 / first visit: load the six-month simulated dataset built at deploy time
+      try {
+        const r = await nativeFetch(new URL('demo.db', document.baseURI));
+        if (r.ok) { data = new Uint8Array(await r.arrayBuffer()); fromDemo = true; }
+      } catch (e) {
+        console.warn('未能加载演示数据，将使用基础数据', e);
+      }
+    }
     globalThis.__SQL_DB = data ? new SQL.Database(data) : new SQL.Database();
     globalThis.__ERP_DEMO = true;
     const http = load('server/http.js');
@@ -102,7 +113,16 @@
     router = new http.Router();
     for (const m of ['base', 'sales', 'orders', 'finance', 'reports', 'integrations']) load(`server/routes/${m}.js`).register(router);
     loadUser = load('server/routes/base.js').loadUser;
-    if (!data) {
+    if (fromDemo) {
+      // 演示版密码算法与服务器不同：统一重置为 123456；清除会话与真实邮箱账户 / reset passwords for the demo hash, drop sessions & mailbox accounts
+      const { hashPassword } = load('server/db.js');
+      for (const u of db.prepare('SELECT id FROM users').all()) {
+        const { hash, salt } = hashPassword('123456');
+        db.prepare('UPDATE users SET password_hash=?, salt=? WHERE id=?').run(hash, salt, u.id);
+      }
+      db.exec('DELETE FROM sessions; DELETE FROM mail_accounts;');
+    }
+    if (!data || fromDemo) {
       await saveNow();
       await idbSet('version', DEMO_VERSION).catch(() => {});
     }
@@ -164,7 +184,6 @@
   }
 
   // ---------- 拦截 fetch / intercept fetch ----------
-  const nativeFetch = window.fetch.bind(window);
   window.fetch = async (input, init = {}) => {
     const raw = typeof input === 'string' ? input : input.url;
     const url = new URL(raw, location.href);

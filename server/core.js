@@ -149,6 +149,19 @@ function assertSampleUsable(db, sampleId, usage) {
 }
 
 /**
+ * 出货校验：旧货号锁定只约束锁定之后创建的订单；锁定前已确认的订单可继续出货
+ * Shipping check: a locked item only blocks orders created after the lock; orders confirmed earlier may still ship.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {number} sampleId 样品ID / sample id
+ * @param {{created_at:string, order_no:string}} order 订单 / order
+ */
+function assertSampleShippable(db, sampleId, order) {
+  const s = db.prepare('SELECT * FROM samples WHERE id=?').get(sampleId);
+  if (s && s.status === '已锁定' && s.locked_at && String(order.created_at) < String(s.locked_at)) return s;
+  return assertSampleUsable(db, sampleId, '出货');
+}
+
+/**
  * 读取系统参数 / Read a system setting.
  * @param {import('node:sqlite').DatabaseSync} db
  * @param {string} key
@@ -160,4 +173,4 @@ function setting(db, key, def = '') {
   return r ? r.value : def;
 }
 
-module.exports = { today, can, need, log, nextNo, tx, num, round, required, assertSampleUsable, setting };
+module.exports = { today, can, need, log, nextNo, tx, num, round, required, assertSampleUsable, assertSampleShippable, setting };

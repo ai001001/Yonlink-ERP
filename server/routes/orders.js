@@ -5,7 +5,7 @@
  * @module server/routes/orders
  */
 const { HttpError } = require('../http');
-const { need, can, log, nextNo, tx, num, round, required, assertSampleUsable, today } = require('../core');
+const { need, can, log, nextNo, tx, num, round, required, assertSampleUsable, assertSampleShippable, today } = require('../core');
 const { docScope, filterItemsForDesigner, syncItems } = require('./sales');
 
 /** 订单头关键字段 / Key header fields watched by risk control */
@@ -28,15 +28,17 @@ function evaluateRisk(db, orderId) {
       (SELECT COALESCE(SUM(received_qty),0) FROM purchase_items WHERE po_id=p.id) received_qty,
       (SELECT COALESCE(SUM(amount),0) FROM payments WHERE po_id=p.id AND status='已付款') paid
     FROM purchases p LEFT JOIN suppliers s ON s.id=p.supplier_id WHERE p.order_id=?`).all(orderId);
+  // worked：任一工序已报工；reported：包装完成的成品数 / worked = any process reported; reported = finished (packed) goods
   const productions = db.prepare(`SELECT p.id, p.prod_no, p.item_no, p.plan_qty, p.status,
-      (SELECT COALESCE(SUM(good_qty),0) FROM production_reports r WHERE r.production_id=p.id) reported
+      (SELECT COALESCE(SUM(good_qty),0) FROM production_reports r WHERE r.production_id=p.id) worked,
+      (SELECT COALESCE(SUM(good_qty),0) FROM production_reports r WHERE r.production_id=p.id AND r.process='包装') reported
     FROM productions p WHERE p.order_id=?`).all(orderId);
   const reasons = [];
   for (const p of purchases) {
     if (p.received_qty > 0) reasons.push(`采购单${p.po_no}已入库${p.received_qty}`);
     if (p.paid > 0) reasons.push(`采购单${p.po_no}已付款¥${round(p.paid)}`);
   }
-  for (const p of productions) if (p.reported > 0) reasons.push(`布产单${p.prod_no}已完工良品${p.reported}`);
+  for (const p of productions) if (p.worked > 0) reasons.push(`布产单${p.prod_no}已开工，已完工良品${p.reported}`);
   let level = '无';
   if (reasons.length) level = '高';
   else if (purchases.length || productions.length) {
@@ -344,7 +346,7 @@ function register(r) {
     const rows = items.map((x) => {
       const oi = o.items.find((i) => i.id === Number(x.order_item_id));
       if (!oi) throw new HttpError(400, '订单明细不存在');
-      assertSampleUsable(ctx.db, oi.sample_id, '出货');
+      assertSampleShippable(ctx.db, oi.sample_id, o);
       if (num(x.qty) > oi.qty - oi.shipped_qty) throw new HttpError(409, `货号${oi.item_no}可出货数量仅剩${oi.qty - oi.shipped_qty}`);
       const s = ctx.db.prepare('SELECT * FROM samples WHERE id=?').get(oi.sample_id);
       const cartons = num(x.cartons) || (s.pcs_per_carton ? Math.ceil(num(x.qty) / s.pcs_per_carton) : 0);

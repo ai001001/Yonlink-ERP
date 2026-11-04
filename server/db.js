@@ -289,6 +289,7 @@ const ADDED_COLUMNS = [
   ['mails', 'uid', 'INTEGER'],
   ['mails', 'mail_date', 'TEXT'],
   ['mails', 'attachments', 'TEXT'],
+  ['samples', 'locked_at', 'TEXT'],
 ];
 
 /** 新增系统参数默认值 / Default values for settings added after v1 */

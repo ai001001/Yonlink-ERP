@@ -52,4 +52,21 @@ fs.writeFileSync(indexFile, html
   .replace(marker, `<script src="vendor/sql-wasm.js"></script>\n  <script src="js/backend.js"></script>\n  ${marker}`)
   .replace('<title>永联陶瓷工贸ERP</title>', '<title>永联陶瓷工贸ERP（在线演示）</title>'));
 fs.writeFileSync(path.join(DIST, '.nojekyll'), '');
-console.log('已生成 GitHub Pages 演示版 / built:', DIST);
+
+// 生成半年模拟业务数据（--no-data 跳过）/ generate six months of simulated data (skip with --no-data)
+if (process.argv.includes('--no-data')) {
+  console.log('已生成 GitHub Pages 演示版（无模拟数据）/ built without data:', DIST);
+} else {
+  const os = require('node:os');
+  const { seedDemo } = require('./seed-demo');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'erp-demo-'));
+  const file = path.join(tmp, 'demo.db');
+  process.env.ERP_SECRET_KEY = process.env.ERP_SECRET_KEY || 'pages-demo-build';
+  seedDemo({ dbFile: file, log: console.log }).then((r) => {
+    r.app.db.close();
+    fs.copyFileSync(file, path.join(DIST, 'demo.db'));
+    fs.rmSync(tmp, { recursive: true, force: true });
+    console.log('模拟数据 / data:', JSON.stringify(r.stats));
+    console.log('已生成 GitHub Pages 演示版 / built:', DIST);
+  }).catch((e) => { console.error(e); process.exit(1); });
+}
