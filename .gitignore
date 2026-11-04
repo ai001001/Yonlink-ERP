@@ -1,0 +1,8 @@
+# 本地数据库与构建产物 / local database and build output
+data/
+dist/
+node_modules/
+# 本地工具配置 / local tool config
+.claude/
+# 原始需求文档不公开 / keep the original spec document private
+*.docx

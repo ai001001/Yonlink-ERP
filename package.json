@@ -1,0 +1,16 @@
+{
+  "name": "yonlink-ceramic-erp",
+  "version": "1.0.0",
+  "description": "陶瓷工艺品工贸一体外贸ERP系统 / Ceramic crafts trade-manufacturing ERP",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "reset": "node server/index.js --reset-only",
+    "test": "node --test tests/"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

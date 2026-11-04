@@ -1,0 +1,66 @@
+# 永联陶瓷工艺品工贸一体外贸 ERP
+
+对标亿星 ERP 架构、按业务流程排布、含**订单变更强制风控**、**工厂询价子模块**、**改样新货号闭环**、**设计师提成溯源**的陶瓷工贸外贸 ERP。B/S 架构，电脑和手机浏览器均可使用。
+
+## 在线演示
+
+**https://ai001001.github.io/yonlink-ceramic-erp/**
+
+演示版把同一套后台逻辑打包进浏览器运行（WebAssembly 版 SQLite），无需安装即可体验全部功能。注意：演示数据只保存在您当前的浏览器里，不同电脑/浏览器之间不共享，可在登录页点「重置演示数据」恢复初始数据。**正式多人使用请按下面的方式在服务器上运行。**
+
+每次推送到 `main` 分支，GitHub Actions 会先运行 41 条自动化测试，通过后自动构建并发布演示版（见 `.github/workflows/pages.yml`）。本地构建：`node scripts/build-pages.js`（输出到 `dist/`）。
+
+## 快速开始
+
+只需安装 [Node.js](https://nodejs.org/) 22.5 或更高版本，**无需安装任何依赖包**。
+
+```bash
+node server/index.js
+```
+
+浏览器打开 http://localhost:8080 ，演示账号密码均为 `123456`：
+
+| 账号 | 岗位 | 账号 | 岗位 |
+|---|---|---|---|
+| admin | 超级管理员 | designer1 | 陶瓷设计师（张雕塑） |
+| sales1 | 外贸业务员（林晓明） | designer2 | 陶瓷设计师（李彩绘） |
+| sales2 | 外贸业务员（王芳） | purchase1 | 采购 |
+| manager1 | 业务经理（审批） | prod1 | 生产管理 |
+| finance1 | 财务 | hr1 | 人事 |
+
+常用命令：
+
+```bash
+node server/index.js --reset          # 重置为演示数据后启动
+node server/index.js --port 9000      # 指定端口
+node --test tests/                    # 运行 41 条自动化测试
+```
+
+数据保存在 `data/erp.db`（单文件，复制即备份）。同一局域网的手机可通过 `http://电脑IP:8080` 访问。
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [docs/01-原型设计.md](docs/01-原型设计.md) | 信息架构、岗位化视图、关键页面线框图、交互规范 |
+| [docs/02-功能设计说明书.md](docs/02-功能设计说明书.md) | 技术架构、16 模块功能点、核心业务规则、数据表 |
+| [docs/03-测试用例.md](docs/03-测试用例.md) | 41 条自动化用例 + 14 条界面用例 + 手工验收清单 |
+| [docs/04-测试报告.md](docs/04-测试报告.md) | 三轮测试过程、发现与修复的缺陷、数据核对 |
+
+## 目录结构
+
+```
+server/            后端（零依赖 Node.js）
+  index.js         启动入口
+  app.js           路由装配与错误处理
+  db.js            建表与演示数据
+  entities.js      档案类实体元数据（通用增删改查）
+  xlsx.js          Excel 生成器
+  routes/          base(权限/档案/审批) sales(报价/询价/送样) orders(订单/风控/出货)
+                   finance(应收/采购/库存/生产) reports(报表/设计师)
+public/            前端单页应用（原生 JS，手机自适应）
+pages/            浏览器演示版运行时（Node 内置模块替代、请求拦截、IndexedDB 存储）与 sql.js
+scripts/          build-pages.js 演示版构建脚本
+tests/             自动化测试
+docs/              原型、功能设计、测试用例、测试报告
+```
