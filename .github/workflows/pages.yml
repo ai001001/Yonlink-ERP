@@ -25,7 +25,7 @@ jobs:
         with:
           node-version: 24
       - name: 自动化测试 / API tests
-        run: node --test tests/
+        run: node --test tests/*.test.js
       - name: 构建演示版 / Build demo
         run: node scripts/build-pages.js
       - uses: actions/configure-pages@v5

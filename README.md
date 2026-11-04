@@ -33,7 +33,7 @@ node server/index.js
 ```bash
 node server/index.js --reset          # 重置为演示数据后启动
 node server/index.js --port 9000      # 指定端口
-node --test tests/                    # 运行 41 条自动化测试
+node --test tests/*.test.js                    # 运行 41 条自动化测试
 ```
 
 数据保存在 `data/erp.db`（单文件，复制即备份）。同一局域网的手机可通过 `http://电脑IP:8080` 访问。
