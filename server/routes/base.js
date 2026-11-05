@@ -32,7 +32,7 @@ function assertStrongPassword(pw, username) {
 }
 
 /** 必须先改密码时仍允许访问的接口 / endpoints allowed while a password change is pending */
-const FRESH_EXEMPT = new Set(['/api/password', '/api/logout', '/api/meta', '/api/public/login-info']);
+const FRESH_EXEMPT = new Set(['/api/password', '/api/logout', '/api/meta', '/api/public/login-info', '/api/public/demo-login']);
 
 /**
  * 初始/临时/弱密码账号在修改密码前禁止使用业务功能
@@ -299,8 +299,34 @@ function register(r) {
     const accounts = show ? ctx.db.prepare(`SELECT u.username, u.name, r.name role_name FROM users u LEFT JOIN roles r ON r.id=u.role_id
       WHERE u.pw_is_default=1 AND u.status='启用' ORDER BY u.id`).all().filter((u) => DEMO_ACCOUNTS[u.username])
       .sort((a, b) => Object.keys(DEMO_ACCOUNTS).indexOf(a.username) - Object.keys(DEMO_ACCOUNTS).indexOf(b.username))
-      .map((u) => ({ username: u.username, name: u.name, role_name: u.role_name, password: DEMO_ACCOUNTS[u.username].password })) : [];
+      .map((u) => ({ username: u.username, name: u.name, role_name: u.role_name })) : [];
     return { policy: POLICY_TEXT, show_demo_accounts: show, accounts };
+  }, { public: true });
+
+  // 演示账号登录：密码不经过浏览器。仅在开启展示且账号仍为演示密码时可用，同样受锁定与限流约束
+  // demo login: the password never reaches the browser; only while display is enabled and the account still uses its demo password
+  r.post('/api/public/demo-login', (ctx) => {
+    const { db } = ctx;
+    const username = String(ctx.body.username || '');
+    const logLogin = (action) => db.prepare("INSERT INTO logs(type,user_name,module,action,target,ip) VALUES('login',?,'system',?,?,?)").run(username.slice(0, 60), action, username.slice(0, 60), ctx.ip);
+    if ((db.prepare("SELECT value FROM settings WHERE key='show_demo_accounts'").get() || {}).value !== '1') throw new HttpError(403, '演示账号登录已关闭，请输入账号密码登录');
+    const u = db.prepare('SELECT * FROM users WHERE username=?').get(username);
+    if (!u || !DEMO_ACCOUNTS[username] || !u.pw_is_default) {
+      logLogin('演示登录被拒绝(非演示账号或已修改密码)');
+      throw new HttpError(403, '该账号已修改密码或不是演示账号，请输入账号密码登录');
+    }
+    if (u.locked_until && u.locked_until > Date.now()) throw new HttpError(423, `该账号已被锁定，请 ${Math.ceil((u.locked_until - Date.now()) / 60000)} 分钟后再试`);
+    if (u.status !== '启用') throw new HttpError(403, '账号已被禁用，请联系管理员');
+    // 二次确认存储的仍是演示密码 / double-check the stored hash still matches the demo password
+    if (!verifyPassword(u, DEMO_ACCOUNTS[username].password)) {
+      db.prepare('UPDATE users SET pw_is_default=0 WHERE id=?').run(u.id);
+      throw new HttpError(403, '该账号已修改密码，请输入账号密码登录');
+    }
+    db.prepare("UPDATE users SET failed_count=0, last_login_at=datetime('now','localtime') WHERE id=?").run(u.id);
+    const token = crypto.randomBytes(32).toString('hex');
+    db.prepare('INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,?)').run(token, u.id, Date.now() + SESSION_TTL);
+    logLogin('登录成功(演示账号)');
+    return { token, must_change: !!u.must_change_password };
   }, { public: true });
 
   r.post('/api/logout', (ctx) => {

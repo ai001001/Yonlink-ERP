@@ -50,7 +50,7 @@ const marker = '<script src="js/core.js"></script>';
 if (!html.includes(marker)) throw new Error('index.html 中找不到 js/core.js 引用');
 fs.writeFileSync(indexFile, html
   .replace(marker, `<script src="vendor/sql-wasm.js"></script>\n  <script src="js/backend.js"></script>\n  ${marker}`)
-  .replace('<title>永联陶瓷工贸ERP</title>', '<title>永联陶瓷工贸ERP（在线演示）</title>')
+  .replace('<title>陶瓷工艺品外贸ERP</title>', '<title>陶瓷工艺品外贸ERP（在线演示）</title>')
   // 演示版需要运行 WebAssembly 版 SQLite 并从浏览器获取汇率 / the demo runs WebAssembly SQLite and fetches rates from the browser
   .replace("script-src 'self';", "script-src 'self' 'wasm-unsafe-eval';")
   .replace("connect-src 'self';", "connect-src 'self' https://open.er-api.com https://api.frankfurter.app;"));

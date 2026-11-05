@@ -301,7 +301,7 @@ const ERP = (() => {
   }
 
   /** 设置页面标题 / Set the breadcrumb title */
-  const setTitle = (t) => { document.getElementById('crumb').textContent = t; document.title = `${t} - 陶瓷工贸ERP`; };
+  const setTitle = (t) => { document.getElementById('crumb').textContent = t; document.title = `${t} - 陶瓷工艺品外贸ERP`; };
 
   /**
    * 打印单据 / Print a document html.

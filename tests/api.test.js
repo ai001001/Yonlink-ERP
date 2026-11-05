@@ -40,15 +40,21 @@ test('TC-SYS-01 登录：正确密码成功，错误密码失败，未登录访�
   assert.equal(me.data.user.role_code, 'admin');
 });
 
-test('TC-SYS-01b 登录页演示账号表列出全部 12 个账号，且每个账号都能用表中密码登录', async () => {
-  const info = await (await fetch(srv.base + '/api/public/login-info')).json();
+test('TC-SYS-01b 登录页演示账号表：列出 12 个账号但不含任何密码；演示登录由服务器验证', async () => {
+  const { DEMO_ACCOUNTS } = require('../server/security');
+  const res = await fetch(srv.base + '/api/public/login-info');
+  const text = await res.text();
+  const info = JSON.parse(text);
   assert.equal(info.accounts.length, 12, '演示账号数量');
+  for (const a of info.accounts) assert.equal(a.password, undefined, `${a.username} 不返回密码`);
+  for (const pw of Object.values(DEMO_ACCOUNTS).map((x) => x.password)) assert.ok(!text.includes(pw), '响应中不出现任何明文密码');
   for (const a of info.accounts) {
-    const r = await fetch(srv.base + '/api/login', { method: 'POST', body: JSON.stringify({ username: a.username, password: a.password }) });
-    assert.equal(r.status, 200, `${a.username} 可登录`);
-    assert.ok(a.password.length >= 10 && /[A-Z]/.test(a.password) && /[^A-Za-z0-9]/.test(a.password), `${a.username} 为复杂密码`);
+    const r = await fetch(srv.base + '/api/public/demo-login', { method: 'POST', body: JSON.stringify({ username: a.username }) });
+    assert.equal(r.status, 200, `${a.username} 演示登录`);
+    assert.ok((await r.json()).token);
   }
-  assert.ok(!JSON.stringify(info).includes('123456'));
+  const none = await fetch(srv.base + '/api/public/demo-login', { method: 'POST', body: JSON.stringify({ username: 'nobody' }) });
+  assert.equal(none.status, 403);
 });
 
 test('TC-SYS-02 账号禁用后无法登录、重置密码', async () => {

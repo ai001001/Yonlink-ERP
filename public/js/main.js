@@ -68,7 +68,7 @@
     const m = ERP.state.meta;
     document.getElementById('userName').textContent = m.user.name;
     document.getElementById('roleTag').textContent = m.user.role_name;
-    document.getElementById('brandName').textContent = m.company.name || '陶瓷工贸ERP';
+    document.getElementById('brandName').textContent = m.company.name || '陶瓷工艺品外贸ERP';
     renderMenu();
     refreshBadges();
   }
@@ -147,17 +147,20 @@
     try {
       const info = await get('/api/public/login-info');
       if (!info.show_demo_accounts || !info.accounts.length) { box.classList.add('hidden'); return; }
-      box.innerHTML = `<div class="muted small" style="margin-bottom:6px">演示账号（仅供体验，正式使用请由管理员关闭展示并修改密码）：</div>
+      box.innerHTML = `<div class="muted small" style="margin-bottom:6px">演示账号（点「填入」后直接登录，密码不在页面显示）：</div>
         <table class="demo-table"><thead><tr><th>岗位</th><th>账号</th><th>密码</th><th></th></tr></thead><tbody>
-        ${info.accounts.map((a) => `<tr><td>${esc(a.role_name)}<span class="muted">　${esc(a.name)}</span></td><td><code>${esc(a.username)}</code></td><td><code>${esc(a.password)}</code></td>
-          <td><button type="button" class="btn small" data-fill="${esc(a.username)}">填入</button></td></tr>`).join('')}</tbody></table>`;
+        ${info.accounts.map((a) => `<tr><td>${esc(a.role_name)}<span class="muted">　${esc(a.name)}</span></td><td><code>${esc(a.username)}</code></td>
+          <td><span class="pw-mask" aria-label="密码已隐藏">●●●●●●●●</span></td><td><button type="button" class="btn small" data-fill="${esc(a.username)}">填入</button></td></tr>`).join('')}</tbody></table>`;
       box.classList.remove('hidden');
       box.querySelectorAll('[data-fill]').forEach((b) => {
         b.onclick = () => {
-          const a = info.accounts.find((x) => x.username === b.dataset.fill);
           const f = document.getElementById('loginForm');
-          f.username.value = a.username;
-          f.password.value = a.password;
+          f.username.value = b.dataset.fill;
+          f.password.value = '';
+          // 演示账号由服务器验证，密码框不放真实密码（浏览器密码管理器也拿不到）/ verified server-side; no real password in the field
+          f.dataset.demo = b.dataset.fill;
+          f.password.required = false;
+          f.password.placeholder = '●●●●●●●●（演示账号，已自动填入）';
           f.querySelector('button[type=submit]').focus();
         };
       });
@@ -166,13 +169,29 @@
     }
   }
 
-  document.getElementById('loginForm').onsubmit = async (e) => {
+  const loginForm = document.getElementById('loginForm');
+  /** 手动修改账号或输入密码时取消演示登录 / typing cancels demo mode */
+  const clearDemo = () => {
+    if (!loginForm.dataset.demo) return;
+    if (loginForm.username.value.trim() === loginForm.dataset.demo && !loginForm.password.value) return;
+    delete loginForm.dataset.demo;
+    loginForm.password.required = true;
+    loginForm.password.placeholder = '请输入密码';
+  };
+  loginForm.username.addEventListener('input', clearDemo);
+  loginForm.password.addEventListener('input', clearDemo);
+  loginForm.onsubmit = async (e) => {
     e.preventDefault();
     const f = e.target;
     const btn = f.querySelector('button[type=submit]');
     btn.disabled = true;
     try {
-      const r = await post('/api/login', { username: f.username.value.trim(), password: f.password.value });
+      const username = f.username.value.trim();
+      const demo = f.dataset.demo && f.dataset.demo === username && !f.password.value;
+      const r = demo ? await post('/api/public/demo-login', { username }) : await post('/api/login', { username, password: f.password.value });
+      delete f.dataset.demo;
+      f.password.required = true;
+      f.password.placeholder = '请输入密码';
       ERP.state.token = r.token;
       localStorage.setItem('erp_token', r.token);
       f.password.value = '';

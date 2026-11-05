@@ -213,7 +213,8 @@
       const note = document.createElement('div');
       note.className = 'alert info small';
       note.style.margin = '0';
-      note.innerHTML = '<span>在线演示版：数据只保存在您当前的浏览器中，不同电脑/浏览器之间不共享。</span>';
+      note.className = 'alert info small demo-note';
+      note.innerHTML = '<span>在线演示版：数据仅保存在当前浏览器，不同设备间不共享</span>';
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'btn small';

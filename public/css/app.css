@@ -1,4 +1,4 @@
-/* 陶瓷工贸ERP 样式 / Ceramic ERP styles */
+/* 陶瓷工艺品外贸ERP 样式 / Ceramic ERP styles */
 :root {
   --bg: #f4f6f8;
   --panel: #ffffff;
@@ -60,6 +60,16 @@ h3 { font-size: 15px; }
 .demo-table tr:last-child td { border-bottom: 0; }
 .demo-table code { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 12px; background: var(--bg); padding: 1px 5px; border-radius: 4px; user-select: all; }
 .demo-table .btn { padding: 2px 8px; }
+.pw-mask { color: var(--muted); letter-spacing: 1px; font-size: 11px; }
+.demo-note { margin: 0; align-items: center; justify-content: space-between; }
+.demo-note span { white-space: nowrap; }
+.demo-note .btn { flex: none; }
+@media (max-width: 560px) {
+  .demo-note span { white-space: normal; }
+  .demo-table th, .demo-table td { white-space: nowrap; padding: 5px 6px; }
+  .demo-table td:first-child .muted { display: none; }
+  .demo-table .pw-mask { font-size: 9px; letter-spacing: 0; }
+}
 .pw-rules { font-size: 12px; color: var(--muted); background: var(--bg); border-radius: 6px; padding: 8px 10px; margin-top: 8px; }
 .pw-rules .ok { color: var(--ok); }
 .pw-rules .no { color: var(--danger); }
@@ -69,13 +79,19 @@ h3 { font-size: 15px; }
 
 /* 布局 / layout */
 .app { display: flex; min-height: 100%; }
-.sidebar { width: 228px; flex: none; background: var(--side); color: var(--side-text); position: sticky; top: 0; height: 100vh; overflow-y: auto; }
-.brand { display: flex; align-items: center; gap: 8px; padding: 16px; font-weight: 600; color: #fff; font-size: 15px; border-bottom: 1px solid rgba(255,255,255,.08); }
-.menu-group { padding: 10px 0 4px; }
-.menu-group > div { padding: 4px 16px; font-size: 11px; letter-spacing: .05em; opacity: .6; }
-.menu-item { display: flex; align-items: center; justify-content: space-between; padding: 7px 16px 7px 22px; color: var(--side-text); font-size: 13.5px; }
+.sidebar { width: 236px; flex: none; background: var(--side); color: var(--side-text); position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+.brand { display: flex; align-items: center; gap: 8px; padding: 16px 14px; font-weight: 600; color: #fff; font-size: 14px; border-bottom: 1px solid rgba(255,255,255,.08); white-space: nowrap; }
+.brand svg { flex: none; }
+.brand span { overflow: hidden; text-overflow: ellipsis; }
+#menu { padding-bottom: 24px; }
+.menu-group { padding: 6px 0 4px; }
+.menu-group + .menu-group { border-top: 1px solid rgba(255,255,255,.07); margin-top: 4px; }
+.menu-group > div { display: flex; align-items: center; gap: 6px; padding: 10px 16px 6px; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: #8fb3c1; }
+.menu-group > div::before { content: ""; width: 3px; height: 12px; border-radius: 2px; background: var(--primary); }
+.menu-item { display: flex; align-items: center; justify-content: space-between; padding: 7px 16px 7px 25px; color: var(--side-text); font-size: 13.5px; }
+.sidebar { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.18) transparent; }
 .menu-item:hover { background: rgba(255,255,255,.05); text-decoration: none; color: #fff; }
-.menu-item.active { background: var(--side-active); color: #fff; border-left: 3px solid var(--primary); padding-left: 19px; }
+.menu-item.active { background: var(--side-active); color: #fff; border-left: 3px solid var(--primary); padding-left: 22px; }
 .badge { background: var(--danger); color: #fff; border-radius: 999px; font-size: 11px; padding: 0 7px; min-width: 18px; text-align: center; }
 .main-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .topbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }

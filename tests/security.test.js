@@ -141,6 +141,9 @@ test('TC-SEC-11 演示账号表：开启时展示仍为演示密码的账号；�
   assert.ok(info.policy.includes('至少10位'));
   const names = info.accounts.map((a) => a.username);
   assert.ok(!names.includes('finance1') && !names.includes('hr1'), '已改密码的账号不再展示');
+  const changed = await fetch(srv.base + '/api/public/demo-login', { method: 'POST', body: JSON.stringify({ username: 'finance1' }) });
+  assert.equal(changed.status, 403, '已改密码的账号不能再用演示登录');
+  assert.ok(info.accounts.every((a) => a.password === undefined), '不返回密码');
   assert.ok(names.includes('admin') && names.includes('sales3') && names.includes('designer3'));
   const s1 = await srv.login('sales1');
   assert.ok(!(await s1.get('/api/dashboard')).data.alerts.some((a) => a.type === '安全提醒'), '非管理员不显示安全提醒');
@@ -148,6 +151,8 @@ test('TC-SEC-11 演示账号表：开启时展示仍为演示密码的账号；�
   await admin.put('/api/settings', { show_demo_accounts: '0' });
   const off = await (await fetch(srv.base + '/api/public/login-info')).json();
   assert.deepEqual(off.accounts, []);
+  const closed = await fetch(srv.base + '/api/public/demo-login', { method: 'POST', body: JSON.stringify({ username: 'admin' }) });
+  assert.equal(closed.status, 403, '关闭展示后演示登录不可用');
   await admin.put('/api/settings', { show_demo_accounts: '1' });
 });
 
