@@ -181,8 +181,9 @@ async function seedDemo({ dbFile, days = 180, seed = 20261104, log = () => {} })
       for (const r of (await api('admin', 'GET', '/api/roles')).rows) ref.role[r.code] = r.id;
       const depts = Object.fromEntries((await api('hr1', 'GET', '/api/e/department')).rows.map((d) => [d.name, d.id]));
       for (const [no, name, dept, pos, username, role] of C.STAFF) {
-        const e = await api('hr1', 'POST', '/api/e/employee', { emp_no: no, name, dept_id: depts[dept], position: pos, phone: '1390000' + no.slice(1), hire_date: dateStr(simNow - rng.int(200, 900) * DAY), status: '在职' });
-        if (username) await api('admin', 'POST', '/api/users', { username, name, role_id: ref.role[role], employee_id: e.id, password: '123456' });
+        let e = db.prepare('SELECT id FROM employees WHERE emp_no=?').get(no);
+        if (!e) e = await api('hr1', 'POST', '/api/e/employee', { emp_no: no, name, dept_id: depts[dept], position: pos, phone: '1390000' + no.slice(1), hire_date: dateStr(simNow - rng.int(200, 900) * DAY), status: '在职' });
+        if (username && !db.prepare('SELECT 1 FROM users WHERE username=?').get(username)) await api('admin', 'POST', '/api/users', { username, name, role_id: ref.role[role], employee_id: e.id, password: '123456' });
       }
       for (const e of (await api('hr1', 'GET', '/api/e/employee?size=100')).rows) ref.emp[e.emp_no] = e.id;
       await api('hr1', 'PUT', `/api/e/employee/${ref.emp.E009}`, { remark: '负责员工入离职与考勤' });

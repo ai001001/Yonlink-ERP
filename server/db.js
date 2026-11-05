@@ -189,6 +189,8 @@ function seed(db) {
     ['E008', '周会计', '财务部', '会计'],
     ['E009', '吴人事', '人事行政部', '人事专员'],
     ['E010', '郑经理', '外贸业务部', '业务经理'],
+    ['E011', '陈静', '外贸业务部', '外贸业务员'],
+    ['E016', '苏雅', '设计部', '陶瓷设计师'],
   ];
   for (const [no, name, d, pos] of emps) {
     ins("INSERT INTO employees(emp_no,name,dept_id,position,phone,hire_date,status) VALUES(?,?,?,?,?,'2024-03-01','在职')", no, name, deptId(d), pos, '1380000' + no.slice(1));
@@ -205,6 +207,8 @@ function seed(db) {
     ['finance1', '周会计', 'finance', 'E008'],
     ['hr1', '吴人事', 'hr', 'E009'],
     ['manager1', '郑经理', 'manager', 'E010'],
+    ['sales3', '陈静', 'sales', 'E011'],
+    ['designer3', '苏雅', 'designer', 'E016'],
   ];
   for (const [u, name, role, emp] of users) {
     const { hash, salt } = hashPassword('123456');

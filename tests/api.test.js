@@ -40,6 +40,13 @@ test('TC-SYS-01 登录：正确密码成功，错误密码失败，未登录访�
   assert.equal(me.data.user.role_code, 'admin');
 });
 
+test('TC-SYS-01b 基础数据包含登录页列出的全部 12 个演示账号', async () => {
+  const js = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'main.js'), 'utf8');
+  const listed = [...js.matchAll(/\['(\w+)', '[^']+'\]/g)].map((m) => m[1]).filter((u) => /^(admin|sales\d|manager\d|designer\d|purchase\d|prod\d|finance\d|hr\d)$/.test(u));
+  assert.equal(listed.length, 12, '登录页快捷账号数量');
+  for (const u of listed) assert.ok((await srv.login(u)).token, `${u} 可登录`);
+});
+
 test('TC-SYS-02 账号禁用后无法登录、重置密码', async () => {
   const users = (await admin.get('/api/users')).data.rows;
   const hrUser = users.find((u) => u.username === 'hr1');

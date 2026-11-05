@@ -85,8 +85,8 @@
     ERP.navigate();
   }
 
-  const demo = [['admin', '超级管理员'], ['sales1', '业务员林晓明'], ['sales2', '业务员王芳'], ['manager1', '业务经理'], ['designer1', '设计师张雕塑'], ['designer2', '设计师李彩绘'],
-    ['purchase1', '采购'], ['prod1', '生产'], ['finance1', '财务'], ['hr1', '人事']];
+  const demo = [['admin', '超级管理员'], ['sales1', '业务员林晓明'], ['sales2', '业务员王芳'], ['sales3', '业务员陈静'], ['manager1', '业务经理'],
+    ['designer1', '设计师张雕塑'], ['designer2', '设计师李彩绘'], ['designer3', '设计师苏雅'], ['purchase1', '采购'], ['prod1', '生产'], ['finance1', '财务'], ['hr1', '人事']];
   document.getElementById('demoAccounts').innerHTML = demo.map(([u, l]) => `<button type="button" class="chip" data-u="${u}">${esc(l)}</button>`).join('');
   document.querySelectorAll('[data-u]').forEach((b) => {
     b.onclick = () => { const f = document.getElementById('loginForm'); f.username.value = b.dataset.u; f.password.value = '123456'; f.querySelector('button[type=submit]').focus(); };
