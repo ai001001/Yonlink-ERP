@@ -20,6 +20,11 @@
       <label>账号<input name="username" required autocomplete="username" maxlength="32" placeholder="请输入账号"></label>
       <label>密码<input name="password" type="password" required autocomplete="current-password" maxlength="64" placeholder="请输入密码"></label>
       <button class="btn primary block" type="submit">登 录</button>
+      <div class="contact-box">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        <span>咨询方式：QQ <b>3313395633</b>（学无止境）</span>
+        <button type="button" class="btn small" data-copy="3313395633">复制QQ</button>
+      </div>
       <div id="demoAccounts" class="demo-accounts hidden"></div>
     </form>
   </div>
@@ -28,12 +33,19 @@
     <aside class="sidebar" id="sidebar">
       <div class="brand"><svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><path d="M11 3h10v4c0 2 4 4 4 10 0 7-4 12-9 12S7 24 7 17c0-6 4-8 4-10z" fill="currentColor"/></svg><span id="brandName">陶瓷工艺品外贸ERP</span></div>
       <nav id="menu"></nav>
+      <div class="side-contact">
+        <div class="muted small">咨询方式</div>
+        <div>QQ：<b>3313395633</b></div>
+        <div class="small">学无止境</div>
+        <button type="button" class="btn small" data-copy="3313395633">复制QQ号</button>
+      </div>
     </aside>
     <div class="backdrop" id="backdrop"></div>
     <div class="main-wrap">
       <header class="topbar">
         <button class="icon-btn" id="menuToggle" aria-label="菜单">☰</button>
         <div class="crumb" id="crumb"></div>
+        <button type="button" class="contact-chip" data-copy="3313395633" title="点击复制QQ号">咨询QQ：3313395633（学无止境）</button>
         <div class="userbox">
           <span class="role-tag" id="roleTag"></span>
           <span id="userName"></span>

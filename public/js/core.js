@@ -274,7 +274,6 @@ const ERP = (() => {
     const hash = location.hash.slice(1) || '/';
     const [path, qs] = hash.split('?');
     const main = document.getElementById('main');
-    document.querySelectorAll('.menu-item').forEach((a) => a.classList.toggle('active', a.getAttribute('href') === '#' + path));
     document.getElementById('sidebar').classList.remove('open');
     document.getElementById('backdrop').classList.remove('show');
     // 导航序号：只有最新一次导航的结果才会挂载，防止慢请求覆盖当前页面

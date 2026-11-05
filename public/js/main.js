@@ -8,20 +8,51 @@
   const origLogout = ERP.logout;
   ERP.logout = async (silent) => { await origLogout(silent); renderDemoAccounts(); };
 
-  /** 菜单（按业务流程排序）/ Menu ordered by business flow: [label, href, module] */
+  /** 分组图标（内联 SVG 路径）/ Group icons (inline SVG paths) */
+  const ICONS = {
+    home: 'M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z',
+    customer: 'M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0zM4 21c0-4 4-6 8-6s8 2 8 6',
+    sample: 'M9 2h6v3c0 2 3 3 3 8 0 5-3 9-6 9s-6-4-6-9c0-5 3-6 3-8z',
+    quote: 'M6 2h9l5 5v15H6zM14 2v6h6M9 13h8M9 17h6',
+    order: 'M3 4h3l2 12h11l2-8H7M9 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm9 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',
+    purchase: 'M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10',
+    production: 'M3 21V10l6 4V10l6 4V6h6v15zM7 18h2M12 18h2M17 18h2',
+    finance: 'M3 6h18v12H3zM3 10h18M7 15h4',
+    report: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
+    base: 'M4 6c0-2 16-2 16 0v12c0 2-16 2-16 0zM4 6c0 2 16 2 16 0M4 12c0 2 16 2 16 0',
+    system: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12l2-1-1-3-2 .3-1.4-1.4L17 5l-3-1-1 2h-2L10 4 7 5l.4 2L6 8.6 4 8.3 3 11l2 1v0l-2 1 1 3 2-.3 1.4 1.4L7 19l3 1 1-2h2l1 2 3-1-.4-2 1.4-1.4 2 .3 1-3z',
+  };
+
+  /**
+   * 菜单：按外贸 ERP 业务板块组织 [板块, 图标, [[名称, 链接, 权限]]]
+   * Menu organised by trade-ERP business domains: [group, icon, [[label, href, permission]]]
+   */
   const MENU = [
-    ['工作台', [['工作台首页', '#/', null], ['审批中心', '#/approvals', '*audit'], ['变更联动任务', '#/change-tasks', '*task']]],
-    ['一期 · 基础档案', [['系统权限管理', '#/system', 'system'], ['部门', '#/e/department', 'hr'], ['员工档案', '#/e/employee', 'hr'],
-      ['供应商', '#/e/supplier', 'supplier'], ['历史供货价格', '#/e/supplier_price', 'supplier'], ['服务机构', '#/e/agency', 'agency'], ['机构对接记录', '#/e/agency_record', 'agency'],
-      ['客户档案', '#/e/customer', 'customer'], ['客户跟进/询盘', '#/e/customer_follow', 'customer']]],
-    ['二期 · 外贸开发', [['业务邮件', '#/mails', 'mail'], ['邮箱账户', '#/mail-accounts', 'mail'], ['样品档案', '#/e/sample', 'sample'], ['改样日志', '#/e/sample_revision', 'sample'],
-      ['币种汇率', '#/e/currency', 'trade'], ['汇率波动记录', '#/e/rate_history', 'trade'], ['贸易术语', '#/e/trade_term', 'trade'],
-      ['报价单', '#/quotes', 'quote'], ['工厂询价台账', '#/inquiries', 'quote:noDesigner'], ['送样单', '#/sends', 'sendsample']]],
-    ['三期 · 订单出货', [['销售订单', '#/orders', 'order'], ['出货台账', '#/shipments', 'order']]],
-    ['四期 · 财务收付', [['应收款与开票', '#/receivables', 'receivable'], ['采购单', '#/purchases', 'purchase'], ['应付与进项票', '#/payables', 'purchase'], ['物料库存', '#/e/inventory', 'purchase']]],
-    ['五期 · 生产管控', [['布产进度', '#/production', 'production']]],
-    ['六期 · 统计分析', [['统计报表', '#/reports/business', 'report'], ['设计师速查中心', '#/designer', 'designer']]],
+    ['工作台', 'home', [['工作台首页', '#/', null], ['审批中心', '#/approvals', '*audit'], ['变更联动任务', '#/change-tasks', '*task']]],
+    ['客户管理', 'customer', [['客户档案', '#/e/customer', 'customer'], ['客户跟进/询盘', '#/e/customer_follow', 'customer'], ['业务邮件', '#/mails', 'mail'], ['邮箱账户', '#/mail-accounts', 'mail']]],
+    ['样品管理', 'sample', [['样品档案', '#/e/sample', 'sample'], ['改样日志', '#/e/sample_revision', 'sample'], ['送样单', '#/sends', 'sendsample']]],
+    ['报价管理', 'quote', [['报价单', '#/quotes', 'quote'], ['工厂询价台账', '#/inquiries', 'quote:noDesigner']]],
+    ['订单出货', 'order', [['销售订单', '#/orders', 'order'], ['出货台账', '#/shipments', 'order']]],
+    ['采购管理', 'purchase', [['采购单', '#/purchases', 'purchase'], ['供应商', '#/e/supplier', 'supplier'], ['历史供货价格', '#/e/supplier_price', 'supplier'], ['物料库存', '#/e/inventory', 'purchase']]],
+    ['生产管理', 'production', [['布产进度', '#/production', 'production']]],
+    ['财务管理', 'finance', [['应收款与开票', '#/receivables', 'receivable'], ['应付与进项票', '#/payables', 'purchase'], ['币种汇率', '#/e/currency', 'trade'], ['汇率波动记录', '#/e/rate_history', 'trade']]],
+    ['统计分析', 'report', [['统计报表', '#/reports/business', 'report'], ['设计师速查中心', '#/designer', 'designer']]],
+    ['基础资料', 'base', [['服务机构', '#/e/agency', 'agency'], ['机构对接记录', '#/e/agency_record', 'agency'], ['贸易术语', '#/e/trade_term', 'trade'], ['部门', '#/e/department', 'hr'], ['员工档案', '#/e/employee', 'hr']]],
+    ['系统设置', 'system', [['系统权限管理', '#/system', 'system']]],
   ];
+
+  /** 详情页归属的菜单 / Menu entry that owns a detail page */
+  const PARENT = [['/quote/', '#/quotes'], ['/inquiry/', '#/inquiries'], ['/send/', '#/sends'], ['/order/', '#/orders'], ['/purchase/', '#/purchases'],
+    ['/receivable/', '#/receivables'], ['/production/', '#/production'], ['/customer/', '#/e/customer'], ['/sample/', '#/e/sample'], ['/reports/', '#/reports/business']];
+
+  /** 折叠状态（记住在本机）/ Collapsed groups, remembered per browser */
+  const store = {
+    get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 忽略 / ignore */ } },
+  };
+  let collapsed = new Set(store.get('erp_menu_collapsed', ['基础资料', '系统设置']));
+  /** 应用整栏收起状态 / apply the whole-sidebar collapsed state */
+  const applySide = () => document.getElementById('app').classList.toggle('side-collapsed', !!store.get('erp_side_collapsed', false));
 
   /**
    * 菜单项是否可见 / Whether a menu item is visible for the current user.
@@ -39,12 +70,63 @@
 
   /** 渲染菜单 / Render the sidebar menu */
   function renderMenu() {
-    const html = MENU.map(([g, items]) => {
+    const svg = (k) => `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="${ICONS[k]}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const groups = MENU.map(([g, icon, items]) => {
       const vis = items.filter(([, , m]) => visible(m));
       if (!vis.length) return '';
-      return `<div class="menu-group"><div>${esc(g)}</div>${vis.map(([l, h]) => `<a class="menu-item" href="${h}">${esc(l)}<span class="badge hidden" data-badge="${h}"></span></a>`).join('')}</div>`;
+      const open = !collapsed.has(g);
+      return `<div class="menu-group ${open ? 'open' : ''}" data-group="${esc(g)}">
+        <button type="button" class="menu-group-head" aria-expanded="${open}" aria-label="${esc(g)}（点击展开/收起）">${svg(icon)}<span>${esc(g)}</span><i class="chev" aria-hidden="true"></i></button>
+        <div class="menu-items">${vis.map(([l, h]) => `<a class="menu-item" href="${h}"><span>${esc(l)}</span><span class="badge hidden" data-badge="${h}"></span></a>`).join('')}</div></div>`;
     }).join('');
-    document.getElementById('menu').innerHTML = html;
+    const menu = document.getElementById('menu');
+    menu.innerHTML = `<div class="menu-tools"><button type="button" class="link-btn side-collapse-btn" id="sideCollapse" title="收起整个左侧栏，点顶部 ☰ 可再展开">« 收起侧栏</button>
+      <span><button type="button" class="link-btn" data-all="close">全部收起</button><button type="button" class="link-btn" data-all="open">全部展开</button></span></div>${groups}`;
+    menu.querySelector('#sideCollapse').onclick = () => { store.set('erp_side_collapsed', true); applySide(); };
+    menu.querySelectorAll('.menu-group-head').forEach((b) => {
+      b.onclick = () => {
+        const grp = b.parentElement;
+        const open = !grp.classList.contains('open');
+        grp.classList.toggle('open', open);
+        b.setAttribute('aria-expanded', String(open));
+        if (open) collapsed.delete(grp.dataset.group); else collapsed.add(grp.dataset.group);
+        store.set('erp_menu_collapsed', [...collapsed]);
+      };
+    });
+    menu.querySelectorAll('[data-all]').forEach((b) => {
+      b.onclick = () => {
+        const open = b.dataset.all === 'open';
+        collapsed = open ? new Set() : new Set(MENU.map(([g]) => g));
+        store.set('erp_menu_collapsed', [...collapsed]);
+        menu.querySelectorAll('.menu-group').forEach((grp) => {
+          grp.classList.toggle('open', open);
+          grp.querySelector('.menu-group-head').setAttribute('aria-expanded', String(open));
+        });
+        if (!open) syncMenu(true);
+      };
+    });
+    syncMenu();
+  }
+
+  /**
+   * 高亮当前页面所属菜单，并展开其所在板块 / Highlight the current entry and expand its group.
+   * @param {boolean} [keepCollapsed] 不改变记忆的折叠状态 / do not persist expansion
+   */
+  function syncMenu(keepCollapsed) {
+    const path = (location.hash.slice(1) || '/').split('?')[0];
+    let href = '#' + path;
+    if (!document.querySelector(`.menu-item[href="${CSS.escape(href)}"]`)) {
+      const p = PARENT.find(([pre]) => path.startsWith(pre));
+      if (p) href = p[1];
+    }
+    document.querySelectorAll('.menu-item').forEach((a) => a.classList.toggle('active', a.getAttribute('href') === href));
+    const active = document.querySelector('.menu-item.active');
+    const grp = active && active.closest('.menu-group');
+    if (grp && !grp.classList.contains('open')) {
+      grp.classList.add('open');
+      grp.querySelector('.menu-group-head').setAttribute('aria-expanded', 'true');
+      if (!keepCollapsed) { collapsed.delete(grp.dataset.group); store.set('erp_menu_collapsed', [...collapsed]); }
+    }
   }
 
   /** 刷新待办角标 / Refresh pending badges */
@@ -205,15 +287,35 @@
   };
   document.getElementById('logoutBtn').onclick = () => ERP.logout();
   document.getElementById('pwdBtn').onclick = () => passwordDialog(false);
+  // 手机：抽屉菜单；电脑：整个左侧栏收起/展开（记住状态）/ phone: drawer; desktop: collapse the whole sidebar (remembered)
+  applySide();
   document.getElementById('menuToggle').onclick = () => {
-    document.getElementById('sidebar').classList.toggle('open');
-    document.getElementById('backdrop').classList.toggle('show');
+    if (window.matchMedia('(max-width: 860px)').matches) {
+      document.getElementById('sidebar').classList.toggle('open');
+      document.getElementById('backdrop').classList.toggle('show');
+    } else {
+      store.set('erp_side_collapsed', !store.get('erp_side_collapsed', false));
+      applySide();
+    }
   };
+
   document.getElementById('backdrop').onclick = () => {
     document.getElementById('sidebar').classList.remove('open');
     document.getElementById('backdrop').classList.remove('show');
   };
-  window.addEventListener('hashchange', () => { if (ERP.state.meta) { ERP.navigate(); refreshBadges(); } });
+  window.addEventListener('hashchange', () => { if (ERP.state.meta) { ERP.navigate(); syncMenu(); refreshBadges(); } });
+
+  // 咨询方式：一键复制 QQ 号 / contact: copy the QQ number
+  document.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-copy]');
+    if (!b) return;
+    try {
+      await navigator.clipboard.writeText(b.dataset.copy);
+      toast(`已复制 QQ 号 ${b.dataset.copy}，可在 QQ 中添加好友咨询`, 'ok');
+    } catch {
+      toast(`QQ：${b.dataset.copy}（请手动复制）`);
+    }
+  });
 
   renderDemoAccounts();
   if (ERP.state.token) enter(); else ERP.logout(true);
