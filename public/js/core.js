@@ -3,10 +3,19 @@
  * 前端核心：接口调用、路由、弹窗、表格、表单、导出、打印
  * Front-end core: API calls, routing, modals, tables, forms, export and print.
  */
+// 防点击劫持：静态托管（如 GitHub Pages）无法发送 X-Frame-Options，被他站嵌入时拒绝运行
+// anti-clickjacking for static hosting (e.g. GitHub Pages) where X-Frame-Options cannot be sent
+if (window.top !== window.self) {
+  document.documentElement.innerHTML = '';
+  throw new Error('该系统禁止被嵌入到其它网页中 / framing is not allowed');
+}
+
 const ERP = (() => {
   const state = { token: localStorage.getItem('erp_token') || '', meta: null, optCache: {} };
   const routes = [];
   let navSeq = 0;
+  // 所有表单由脚本处理，阻止浏览器默认提交（替代内联 onsubmit，满足 CSP）/ scripts handle every form; replaces inline onsubmit for CSP
+  document.addEventListener('submit', (e) => e.preventDefault(), true);
 
   /**
    * HTML 转义 / Escape HTML.
@@ -39,6 +48,7 @@ const ERP = (() => {
     const data = ct.includes('json') ? await res.json() : await res.blob();
     if (!res.ok) {
       if (res.status === 401 && url !== '/api/login') { logout(true); }
+      if (res.status === 403 && data && data.code === 'MUST_CHANGE_PASSWORD' && ERP.forcePasswordChange) ERP.forcePasswordChange();
       const err = new Error((data && data.error) || `请求失败(${res.status})`);
       err.status = res.status;
       err.data = data;
@@ -198,7 +208,7 @@ const ERP = (() => {
       else input = `<input name="${f.name}" type="${f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}" ${f.type === 'number' ? 'step="any"' : ''} value="${esc(v)}" ${dis}>`;
       parts.push(`<label class="${f.type === 'textarea' ? 'wide' : ''}"><span class="${req}">${esc(f.label)}</span>${input}</label>`);
     }
-    return `<form class="form-grid" onsubmit="return false">${parts.join('')}</form>`;
+    return `<form class="form-grid">${parts.join('')}</form>`;
   }
 
   /**
@@ -311,7 +321,12 @@ const ERP = (() => {
     if (!silent && state.token) await post('/api/logout').catch(() => {});
     state.token = '';
     state.meta = null;
+    state.optCache = {};
     localStorage.removeItem('erp_token');
+    // 清除上一位用户的页面内容，防止共用电脑时泄露 / wipe the previous user's screen content on shared computers
+    navSeq++;
+    for (const id of ['main', 'menu', 'modalRoot', 'printArea']) { const el = document.getElementById(id); if (el) el.innerHTML = ''; }
+    for (const id of ['userName', 'roleTag', 'crumb']) { const el = document.getElementById(id); if (el) el.textContent = ''; }
     document.getElementById('app').classList.add('hidden');
     document.getElementById('login').classList.remove('hidden');
   }

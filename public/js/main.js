@@ -5,6 +5,8 @@
  */
 (() => {
   const { esc, get, post, toast, modal, readForm, can } = ERP;
+  const origLogout = ERP.logout;
+  ERP.logout = async (silent) => { await origLogout(silent); renderDemoAccounts(); };
 
   /** 菜单（按业务流程排序）/ Menu ordered by business flow: [label, href, module] */
   const MENU = [
@@ -82,33 +84,108 @@
     }
     document.getElementById('login').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
+    if (ERP.state.meta.user.must_change) { passwordDialog(true); return; }
     ERP.navigate();
   }
 
-  const demo = [['admin', '超级管理员'], ['sales1', '业务员林晓明'], ['sales2', '业务员王芳'], ['sales3', '业务员陈静'], ['manager1', '业务经理'],
-    ['designer1', '设计师张雕塑'], ['designer2', '设计师李彩绘'], ['designer3', '设计师苏雅'], ['purchase1', '采购'], ['prod1', '生产'], ['finance1', '财务'], ['hr1', '人事']];
-  document.getElementById('demoAccounts').innerHTML = demo.map(([u, l]) => `<button type="button" class="chip" data-u="${u}">${esc(l)}</button>`).join('');
-  document.querySelectorAll('[data-u]').forEach((b) => {
-    b.onclick = () => { const f = document.getElementById('loginForm'); f.username.value = b.dataset.u; f.password.value = '123456'; f.querySelector('button[type=submit]').focus(); };
-  });
+  /**
+   * 前端即时检查密码规则（最终以服务器校验为准）/ Live client-side password checklist (server is authoritative).
+   * @param {string} pw
+   * @param {string} username
+   * @returns {[string, boolean][]}
+   */
+  const pwChecks = (pw, username) => [
+    ['至少10位', pw.length >= 10], ['大写字母', /[A-Z]/.test(pw)], ['小写字母', /[a-z]/.test(pw)], ['数字', /[0-9]/.test(pw)],
+    ['特殊符号', /[^A-Za-z0-9]/.test(pw)], ['不含账号名', !username || !pw.toLowerCase().includes(username.toLowerCase())],
+    ['无3个相同字符', !/(.)\1\1/.test(pw)],
+  ];
+
+  /**
+   * 修改密码弹窗 / Password change dialog.
+   * @param {boolean} [forced] 强制修改（不可取消）/ forced (cannot be dismissed)
+   */
+  function passwordDialog(forced = false) {
+    if (document.querySelector('.modal.pwd')) return;
+    const username = ERP.state.meta ? ERP.state.meta.user.username : '';
+    const m = modal({
+      title: forced ? '首次登录 / 临时密码：请先修改密码' : '修改密码', cls: 'pwd',
+      body: `${forced ? '<div class="alert warn">为了账号安全，当前密码为初始密码、临时密码或不符合安全要求，必须修改后才能继续使用系统。</div>' : ''}
+        <div class="form-grid"><label>原密码<input type="password" name="old_password" autocomplete="current-password"></label>
+        <label>新密码<input type="password" name="new_password" autocomplete="new-password" maxlength="64"></label>
+        <label>确认新密码<input type="password" name="confirm" autocomplete="new-password" maxlength="64"></label></div>
+        <div class="pw-rules" id="pwRules"></div>`,
+      buttons: [{
+        text: '保存新密码', cls: 'primary', onClick: async (mm) => {
+          const f = readForm(mm.el);
+          if (f.new_password !== f.confirm) throw new Error('两次输入的新密码不一致');
+          await post('/api/password', { old_password: f.old_password, new_password: f.new_password });
+          mm.close();
+          toast('密码已修改，其它设备上的登录已自动退出', 'ok');
+          if (forced) await enter();
+        },
+      }],
+    });
+    if (forced) {
+      m.el.querySelector('[data-x]').remove();
+      const foot = m.el.querySelector('.modal-foot .btn:last-child');
+      foot.textContent = '退出登录';
+      foot.onclick = () => { m.close(); ERP.logout(); };
+    }
+    const rules = m.el.querySelector('#pwRules');
+    const render = () => {
+      const pw = m.el.querySelector('[name=new_password]').value;
+      rules.innerHTML = `密码要求：${pwChecks(pw, username).map(([t, ok]) => `<span class="${pw ? (ok ? 'ok' : 'no') : ''}">${ok && pw ? '✓' : '·'} ${t}</span>`).join('　')}`;
+    };
+    m.el.querySelector('[name=new_password]').addEventListener('input', render);
+    render();
+  }
+  ERP.forcePasswordChange = () => passwordDialog(true);
+
+  /** 登录页演示账号表 / Demo account table on the login page */
+  async function renderDemoAccounts() {
+    const box = document.getElementById('demoAccounts');
+    try {
+      const info = await get('/api/public/login-info');
+      if (!info.show_demo_accounts || !info.accounts.length) { box.classList.add('hidden'); return; }
+      box.innerHTML = `<div class="muted small" style="margin-bottom:6px">演示账号（仅供体验，正式使用请由管理员关闭展示并修改密码）：</div>
+        <table class="demo-table"><thead><tr><th>岗位</th><th>账号</th><th>密码</th><th></th></tr></thead><tbody>
+        ${info.accounts.map((a) => `<tr><td>${esc(a.role_name)}<span class="muted">　${esc(a.name)}</span></td><td><code>${esc(a.username)}</code></td><td><code>${esc(a.password)}</code></td>
+          <td><button type="button" class="btn small" data-fill="${esc(a.username)}">填入</button></td></tr>`).join('')}</tbody></table>`;
+      box.classList.remove('hidden');
+      box.querySelectorAll('[data-fill]').forEach((b) => {
+        b.onclick = () => {
+          const a = info.accounts.find((x) => x.username === b.dataset.fill);
+          const f = document.getElementById('loginForm');
+          f.username.value = a.username;
+          f.password.value = a.password;
+          f.querySelector('button[type=submit]').focus();
+        };
+      });
+    } catch {
+      box.classList.add('hidden');
+    }
+  }
+
   document.getElementById('loginForm').onsubmit = async (e) => {
     e.preventDefault();
     const f = e.target;
+    const btn = f.querySelector('button[type=submit]');
+    btn.disabled = true;
     try {
       const r = await post('/api/login', { username: f.username.value.trim(), password: f.password.value });
       ERP.state.token = r.token;
       localStorage.setItem('erp_token', r.token);
+      f.password.value = '';
       location.hash = '#/';
       await enter();
     } catch (err) {
       toast(err.message, 'error');
+    } finally {
+      btn.disabled = false;
     }
   };
   document.getElementById('logoutBtn').onclick = () => ERP.logout();
-  document.getElementById('pwdBtn').onclick = () => modal({
-    title: '修改密码', body: '<div class="form-grid"><label>原密码<input type="password" name="old_password"></label><label>新密码（至少6位）<input type="password" name="new_password"></label></div>',
-    buttons: [{ text: '保存', cls: 'primary', onClick: async (m) => { await post('/api/password', readForm(m.el)); m.close(); toast('密码已修改', 'ok'); } }],
-  });
+  document.getElementById('pwdBtn').onclick = () => passwordDialog(false);
   document.getElementById('menuToggle').onclick = () => {
     document.getElementById('sidebar').classList.toggle('open');
     document.getElementById('backdrop').classList.toggle('show');
@@ -119,5 +196,6 @@
   };
   window.addEventListener('hashchange', () => { if (ERP.state.meta) { ERP.navigate(); refreshBadges(); } });
 
+  renderDemoAccounts();
   if (ERP.state.token) enter(); else ERP.logout(true);
 })();

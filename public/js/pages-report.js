@@ -93,7 +93,7 @@
       </div>
       <h3 style="margin:6px 0">按货号汇总</h3>${tableHtml(['货号', '品名', '原货号', '状态', '报价次数', '送样次数', '下单数量', '已出货数量', '已出货金额¥'], sum.samples.map((x) => [esc(x.company_no), esc(x.name), esc(x.parent_no), tag(x.status), x.quotes, x.sends, x.order_qty, x.shipped_qty, money(x.shipped_amount_cny)]), new Set([4, 5, 6, 7, 8]))}</div>
       <div class="panel"><div class="tabs">${tabs.map(([k, l]) => `<button class="tab ${k === tab ? 'active' : ''}" data-tab="${k}">${l}</button>`).join('')}</div>
-        <form class="form-grid" id="flt" onsubmit="return false" style="margin-bottom:12px"><label>货号<input name="item_no" value="${esc(filters.item_no)}"></label>
+        <form class="form-grid" id="flt" style="margin-bottom:12px"><label>货号<input name="item_no" value="${esc(filters.item_no)}"></label>
           <label>开始日期<input type="date" name="from" value="${esc(filters.from)}"></label><label>结束日期<input type="date" name="to" value="${esc(filters.to)}"></label>
           <label>状态<input name="status" value="${esc(filters.status)}" placeholder="如 已成交/已锁定"></label>
           <div style="align-self:end" class="toolbar"><button class="btn primary" id="go">查询</button>${can('designer', 'export') ? '<button class="btn" id="exp">导出Excel</button>' : ''}${can('designer', 'print') ? '<button class="btn" id="prt">打印对账单</button>' : ''}</div></form>

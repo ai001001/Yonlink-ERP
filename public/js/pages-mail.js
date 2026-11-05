@@ -115,7 +115,7 @@
       <div class="tabs">${folders.map(([k, l]) => `<button class="tab ${k === folder ? 'active' : ''}" data-folder="${k}">${l}</button>`).join('')}</div>
       ${tableHtml(['时间', '方向', '发件人 / 收件人', '主题', '分类', '绑定', '附件', '状态'], data.rows.map((m) => [
     esc(m.mail_date || m.created_at), m.direction === '收件' ? '<span class="tag info">收</span>' : '<span class="tag">发</span>',
-    esc(m.direction === '收件' ? m.mail_from : m.mail_to), `<a href="javascript:void 0" data-mail="${m.id}">${esc(m.subject || '(无主题)')}</a>`, esc(m.category),
+    esc(m.direction === '收件' ? m.mail_from : m.mail_to), `<a href="#/mails" data-mail="${m.id}">${esc(m.subject || '(无主题)')}</a>`, esc(m.category),
     [m.customer_name, m.quote_no, m.order_no, m.sample_no].filter(Boolean).map((x) => `<span class="tag info">${esc(x)}</span>`).join(' ') || '<span class="muted small">未绑定</span>',
     m.attachment_count ? `📎${m.attachment_count}` : '', m.status === '发送失败' ? `<span class="tag danger" title="${esc(m.error)}">发送失败</span>` : tag(m.status)]))}
       <div class="pager"><span>第 ${page}/${pages} 页</span>
@@ -124,7 +124,7 @@
     main.querySelector('#q').onkeydown = (e) => { if (e.key === 'Enter') go({ q: e.target.value.trim() }); };
     main.querySelectorAll('[data-folder]').forEach((b) => { b.onclick = () => go({ folder: b.dataset.folder }); });
     main.querySelectorAll('[data-page]').forEach((b) => { b.onclick = () => go({ page: b.dataset.page }); });
-    main.querySelectorAll('[data-mail]').forEach((a) => { a.onclick = () => showMail(Number(a.dataset.mail)).catch((e) => toast(e.message, 'error')); });
+    main.querySelectorAll('[data-mail]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); showMail(Number(a.dataset.mail)).catch((err) => toast(err.message, 'error')); }; });
     const cb = main.querySelector('#compose');
     if (cb) cb.onclick = () => compose().catch((e) => toast(e.message, 'error'));
     main.querySelector('#fetchAll').onclick = async (e) => {

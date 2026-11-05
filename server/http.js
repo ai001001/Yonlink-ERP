@@ -125,6 +125,8 @@ function sendJson(res, status, data) {
  */
 function sendFile(res, buf, filename, type) {
   res.writeHead(200, {
+    // 下载内容在沙箱中处理，不能执行脚本 / downloaded content is sandboxed and cannot run scripts
+    'Content-Security-Policy': "sandbox; default-src 'none'",
     'Content-Type': type,
     'Content-Length': buf.length,
     'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
@@ -152,8 +154,10 @@ const MIME = {
  */
 function serveStatic(root, pathname, res) {
   const rel = pathname === '/' ? '/index.html' : pathname;
+  // 禁止隐藏文件与目录穿越 / block dot-files and path traversal
+  if (rel.split('/').some((seg) => seg.startsWith('.')) || rel.includes('\0')) return false;
   const file = path.normalize(path.join(root, rel));
-  if (!file.startsWith(root)) return false;
+  if (!file.startsWith(root + path.sep)) return false;
   if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return false;
   res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
   fs.createReadStream(file).pipe(res);

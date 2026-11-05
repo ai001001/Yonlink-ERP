@@ -122,6 +122,19 @@ function sha256(msg) {
 
 /** node:crypto 替代 / node:crypto stand-in */
 const cryptoShim = {
+  /** @param {number} max 上限（不含）/ exclusive upper bound */
+  randomInt(max) {
+    const lim = Math.floor(0x100000000 / max) * max;
+    const b = new Uint32Array(1);
+    do { globalThis.crypto.getRandomValues(b); } while (b[0] >= lim);
+    return b[0] % max;
+  },
+  /** 固定时间比较 / constant-time comparison */
+  timingSafeEqual(a, b) {
+    let d = a.length ^ b.length;
+    for (let i = 0; i < Math.max(a.length, b.length); i++) d |= (a[i] || 0) ^ (b[i] || 0);
+    return d === 0;
+  },
   /** @param {number} n */
   randomBytes(n) {
     const b = new Buffer(n);

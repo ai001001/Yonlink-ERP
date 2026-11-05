@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta name="referrer" content="no-referrer">
   <title>永联陶瓷工贸ERP</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M11 3h10v4c0 2 4 4 4 10 0 7-4 12-9 12S7 24 7 17c0-6 4-8 4-10z' fill='%231f6f8b'/></svg>">
   <link rel="stylesheet" href="css/app.css">
@@ -15,13 +17,10 @@
       </div>
       <h1>陶瓷工艺品工贸一体外贸ERP</h1>
       <p class="muted">外贸接单 · 样品报价 · 工厂询价 · 订单风控 · 生产采购 · 财务开票</p>
-      <label>账号<input name="username" required autocomplete="username" placeholder="例如 admin"></label>
-      <label>密码<input name="password" type="password" required autocomplete="current-password" placeholder="演示密码 123456"></label>
+      <label>账号<input name="username" required autocomplete="username" maxlength="32" placeholder="请输入账号"></label>
+      <label>密码<input name="password" type="password" required autocomplete="current-password" maxlength="64" placeholder="请输入密码"></label>
       <button class="btn primary block" type="submit">登 录</button>
-      <div class="demo-accounts">
-        <div class="muted small">演示账号（密码均为 123456），点击快速填入：</div>
-        <div id="demoAccounts" class="chips"></div>
-      </div>
+      <div id="demoAccounts" class="demo-accounts hidden"></div>
     </form>
   </div>
 

@@ -4,13 +4,15 @@
  * Test helpers: start an in-memory instance, log in, send requests.
  */
 const { createApp } = require('../server/app');
+const { DEMO_ACCOUNTS } = require('../server/security');
 
 /**
  * 启动测试服务 / Start a test server on a random port.
+ * @param {object} [opts] 传给 createApp 的选项（默认不限流）/ createApp options (rate limiting off by default)
  * @returns {Promise<{base:string, app:object, close:Function, login:Function}>}
  */
-async function startServer() {
-  const app = createApp({ dbFile: ':memory:' });
+async function startServer(opts = {}) {
+  const app = createApp({ dbFile: ':memory:', rateLimit: 0, ...opts });
   await new Promise((r) => app.server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${app.server.address().port}`;
 
@@ -19,7 +21,7 @@ async function startServer() {
    * @param {string} username
    * @param {string} [password]
    */
-  async function login(username, password = '123456') {
+  async function login(username, password = (DEMO_ACCOUNTS[username] || {}).password) {
     const res = await fetch(base + '/api/login', { method: 'POST', body: JSON.stringify({ username, password }) });
     const j = await res.json();
     if (!res.ok) throw new Error(j.error);
@@ -31,6 +33,7 @@ async function startServer() {
     };
     return {
       token: j.token,
+      must_change: j.must_change,
       get: (u) => call('GET', u),
       post: (u, b) => call('POST', u, b || {}),
       put: (u, b) => call('PUT', u, b || {}),

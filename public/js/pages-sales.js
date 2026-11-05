@@ -69,7 +69,7 @@
       ${q.status === '已驳回' ? `<div class="alert danger"><span class="t">审批驳回</span>${esc(q.audit_note)}</div>` : ''}
       <div class="panel"><div class="panel-head"><h2>${isNew ? '新建报价单' : esc(q.quote_no)} ${tag(q.status)}</h2>
         <div class="toolbar" id="actions"></div></div>
-        <form class="form-grid" id="hdr" onsubmit="return false">
+        <form class="form-grid" id="hdr">
           <label><span class="req">客户</span><select name="customer_id" ${dis}>${optHtml(customers, q.customer_id)}</select></label>
           <label><span class="req">币种</span><select name="currency" ${dis}>${optHtml(currencies, q.currency, false)}</select></label>
           <label><span class="req">贸易术语</span><select name="term" ${dis}>${optHtml(terms, q.term, false)}</select></label>
@@ -221,7 +221,7 @@
     const { rows } = await get('/api/inquiries?' + query);
     main.innerHTML = `<div class="panel"><div class="panel-head"><h2>工厂询价台账 <span class="muted small">${rows.length} 张</span></h2>
       ${can('quote', 'export') ? '<button class="btn" id="exp">导出Excel</button>' : ''}</div>
-      <form class="form-grid" id="flt" onsubmit="return false" style="margin-bottom:12px">
+      <form class="form-grid" id="flt" style="margin-bottom:12px">
         <label>报价单号<input name="quote_no" value="${esc(qs.get('quote_no'))}"></label><label>厂家<input name="supplier" value="${esc(qs.get('supplier'))}"></label>
         <label>货号<input name="item_no" value="${esc(qs.get('item_no'))}"></label><label>开始日期<input type="date" name="from" value="${esc(qs.get('from'))}"></label>
         <label>结束日期<input type="date" name="to" value="${esc(qs.get('to'))}"></label><label>状态<select name="status">${optHtml(['待发送', '已发送', '已回价'], qs.get('status'))}</select></label>
@@ -324,7 +324,7 @@
         ${!isNew && it.id && it.new_item_no && !it.new_sample_id && can('sendsample', 'edit') && !designer ? `<button class="btn small" data-vok="${it.id}">核验通过</button> <button class="btn small danger" data-vng="${it.id}">不通过重做</button>` : ''}
         ${!isNew && it.verify_status === '通过' && !it.new_sample_id && can('sample', 'add') && !designer ? ` <button class="btn small primary" data-conv="${it.id}">一键转正归档</button>` : ''}</td></tr>`;
     main.innerHTML = `<div class="panel"><div class="panel-head"><h2>${isNew ? '新建送样单' : esc(d.send_no)} ${tag(d.status)}</h2><div class="toolbar" id="actions"></div></div>
-      <form class="form-grid" id="hdr" onsubmit="return false">
+      <form class="form-grid" id="hdr">
         <label><span class="req">客户</span><select name="customer_id" ${dis}>${optHtml(customers, d.customer_id)}</select></label>
         <label><span>关联报价单</span><select name="quote_id" ${dis}>${optHtml(quotes, d.quote_id)}</select></label>
         <label><span>送样费用¥</span><input name="cost" type="number" step="any" value="${esc(d.cost)}" ${dis}></label>

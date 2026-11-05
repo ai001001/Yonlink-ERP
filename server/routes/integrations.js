@@ -10,6 +10,36 @@ const { ENTITIES } = require('../entities');
 const { scopeClause } = require('./base');
 const mail = require('../mail');
 const { updateRates } = require('../rates');
+const { isPrivateIp } = require('../security');
+
+/** 允许的邮件端口 / permitted mail ports */
+const MAIL_PORTS = { smtp: [25, 465, 587, 2465, 2525], imap: [143, 993, 2143, 2993] };
+
+/**
+ * 防止借邮箱配置探测内网（SSRF）：限制端口，默认禁止内网/本机地址
+ * SSRF guard for mailbox servers: restrict ports and, by default, refuse private/loopback addresses.
+ * @param {object} db
+ * @param {object} acc 账户（smtp_host/imap_host/端口）/ account
+ */
+async function assertSafeMailServers(db, acc) {
+  const allowPrivate = (db.prepare("SELECT value FROM settings WHERE key='mail_allow_private_hosts'").get() || {}).value === '1';
+  for (const [kind, host, port] of [['smtp', acc.smtp_host, Number(acc.smtp_port)], ['imap', acc.imap_host, Number(acc.imap_port)]]) {
+    if (!/^[A-Za-z0-9.:-]{1,253}$/.test(String(host || ''))) throw new HttpError(400, `${kind.toUpperCase()} 服务器地址格式错误`);
+    if (!(port > 0 && port < 65536)) throw new HttpError(400, `${kind.toUpperCase()} 端口无效`);
+    // 管理员开启“允许内网邮件服务器”时视为受信任内网环境 / trusted internal environment when enabled by an administrator
+    if (allowPrivate) continue;
+    if (!MAIL_PORTS[kind].includes(port)) throw new HttpError(400, `${kind.toUpperCase()} 端口 ${port} 不在允许范围（${MAIL_PORTS[kind].join('/')}）`);
+    let addrs;
+    try {
+      addrs = (await require('node:dns').promises.lookup(host, { all: true })).map((a) => a.address);
+    } catch {
+      throw new HttpError(400, `找不到服务器 ${host}，请检查地址`);
+    }
+    if (/^localhost$/i.test(host) || addrs.some(isPrivateIp)) {
+      throw new HttpError(400, `${host} 指向内网或本机地址，出于安全考虑已禁止。如确需使用公司内部邮件服务器，请管理员在系统参数中开启“允许内网邮件服务器”。`);
+    }
+  }
+}
 
 /** 演示版拦截真实邮箱操作 / Block real-mailbox operations in the browser demo */
 function assertNotDemo() {
@@ -119,6 +149,7 @@ async function fetchAccount(db, config, acc, userName) {
   const setting = (k, d) => (db.prepare('SELECT value FROM settings WHERE key=?').get(k) || {}).value || d;
   const now = () => new Date().toLocaleString('sv-SE');
   try {
+    await assertSafeMailServers(db, acc);
     const res = await mail.fetchNew(plainAccount(config, acc), { initialSync: num(setting('mail_initial_sync', '50')) || 50 });
     let fetched = 0;
     let duplicates = 0;
@@ -176,6 +207,7 @@ async function sendAndRecord(ctx, acc, m) {
   const saved = atts.map((a) => ({ file_id: saveFile(ctx.db, { name: a.filename, mime: a.contentType, data: a.content, owner_type: 'mail', owner_id: id, user: ctx.user.name }), name: a.filename, size: a.content.length }));
   if (saved.length) ctx.db.prepare('UPDATE mails SET attachments=? WHERE id=?').run(JSON.stringify(saved), id);
   try {
+    await assertSafeMailServers(ctx.db, acc);
     const r = await mail.sendMail(plainAccount(ctx.config, acc), { from: { name: acc.display_name || '', address: acc.email }, to, cc, subject: m.subject, text: m.body || '', attachments: atts });
     ctx.db.prepare("UPDATE mails SET status='已发送', message_id=?, error=NULL WHERE id=?").run(r.messageId, id);
     log(ctx, 'mail', '发送邮件', m.subject, `${acc.email} → ${to.map((a) => a.address).join(',')}`);
@@ -263,7 +295,7 @@ function register(r) {
     }
     return out;
   });
-  const saveAccount = (ctx, id) => {
+  const saveAccount = async (ctx, id) => {
     assertNotDemo();
     const b = ctx.body;
     required(b, { email: '邮箱地址', smtp_host: 'SMTP 服务器', smtp_port: 'SMTP 端口', imap_host: 'IMAP 服务器', imap_port: 'IMAP 端口' });
@@ -283,6 +315,7 @@ function register(r) {
       auto_fetch: b.auto_fetch === false || b.auto_fetch === 0 || b.auto_fetch === '0' ? 0 : 1,
     };
     if (b.password) row.password_enc = mail.encryptSecret(b.password, ctx.config.secret);
+    await assertSafeMailServers(ctx.db, row);
     const cols = Object.keys(row);
     try {
       if (old) {
@@ -311,7 +344,9 @@ function register(r) {
   r.post('/api/mail-accounts/:id/test', async (ctx) => {
     need(ctx, 'mail', 'view');
     assertNotDemo();
-    const a = plainAccount(ctx.config, getAccount(ctx, ctx.params.id));
+    const raw = getAccount(ctx, ctx.params.id);
+    await assertSafeMailServers(ctx.db, raw);
+    const a = plainAccount(ctx.config, raw);
     const out = {};
     try { await mail.testSmtp(a); out.smtp = { ok: true, message: `SMTP ${a.smtp_host}:${a.smtp_port} 登录成功` }; } catch (e) { out.smtp = { ok: false, message: e.message }; }
     try { await mail.testImap(a); out.imap = { ok: true, message: `IMAP ${a.imap_host}:${a.imap_port} 登录成功` }; } catch (e) { out.imap = { ok: false, message: e.message }; }

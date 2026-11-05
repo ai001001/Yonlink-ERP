@@ -10,6 +10,41 @@ const { can, need, log, tx, required, today, num } = require('../core');
 const { ENTITIES, REF_LABEL } = require('../entities');
 const { hashPassword, ACTIONS } = require('../db');
 const { tableXlsx } = require('../xlsx');
+const { DEMO_ACCOUNTS, POLICY_TEXT, passwordProblems, generatePassword, safeEqual, rateLimiter } = require('../security');
+
+
+/**
+ * 校验密码是否正确（固定时间比较）/ Verify a password with constant-time comparison.
+ * @param {object} u 用户行 / user row
+ * @param {string} password
+ * @returns {boolean}
+ */
+const verifyPassword = (u, password) => safeEqual(hashPassword(password, u.salt).hash, u.password_hash);
+
+/**
+ * 校验新密码强度，不合格抛 400 / Assert a new password is strong enough.
+ * @param {string} pw
+ * @param {string} username
+ */
+function assertStrongPassword(pw, username) {
+  const p = passwordProblems(pw, username);
+  if (p.length) throw new HttpError(400, `密码强度不足：${p.join('、')}。要求：${POLICY_TEXT}`);
+}
+
+/** 必须先改密码时仍允许访问的接口 / endpoints allowed while a password change is pending */
+const FRESH_EXEMPT = new Set(['/api/password', '/api/logout', '/api/meta', '/api/public/login-info']);
+
+/**
+ * 初始/临时/弱密码账号在修改密码前禁止使用业务功能
+ * Block business endpoints until a temporary or weak password has been changed.
+ * @param {object} ctx
+ * @param {string} pathname
+ */
+function assertPasswordFresh(ctx, pathname) {
+  if (ctx.user && ctx.user.must_change && !FRESH_EXEMPT.has(pathname)) {
+    throw new HttpError(403, '为了账号安全，请先修改初始密码/临时密码后再使用系统', { code: 'MUST_CHANGE_PASSWORD' });
+  }
+}
 
 const SESSION_TTL = 12 * 3600 * 1000;
 
@@ -30,7 +65,7 @@ function loadUser(db, token) {
   let perms = {};
   try { perms = JSON.parse(u.perms || '{}'); } catch { perms = {}; }
   return {
-    id: u.id, username: u.username, name: u.name, role_code: u.role_code, role_name: u.role_name,
+    id: u.id, username: u.username, name: u.name, role_code: u.role_code, role_name: u.role_name, must_change: !!u.must_change_password,
     scope: u.data_scope || 'all', employee_id: u.employee_id, perms, enabledModules: enabled,
   };
 }
@@ -206,19 +241,66 @@ const DELETE_GUARDS = {
  * @param {import('../http').Router} r
  */
 function register(r) {
+  /** 每个应用实例独立计数：同一 IP 10 分钟内最多 20 次登录失败 / per-instance: at most 20 failed logins per IP per 10 minutes */
+  const ipFailures = rateLimiter(20, 10 * 60000);
   // ---------- 登录鉴权 / auth ----------
   r.post('/api/login', (ctx) => {
     const { username, password } = ctx.body;
     required(ctx.body, { username: '账号', password: '密码' });
-    const u = ctx.db.prepare('SELECT * FROM users WHERE username=?').get(username);
-    const ok = u && hashPassword(password, u.salt).hash === u.password_hash;
-    ctx.db.prepare("INSERT INTO logs(type,user_name,module,action,target,ip) VALUES('login',?,'system',?,?,?)")
-      .run(username, ok ? (u.status === '启用' ? '登录成功' : '登录失败(账号已禁用)') : '登录失败(密码错误)', username, ctx.ip);
-    if (!ok) throw new HttpError(401, '账号或密码错误');
-    if (u.status !== '启用') throw new HttpError(403, '账号已被禁用，请联系管理员');
-    const token = crypto.randomBytes(24).toString('hex');
-    ctx.db.prepare('INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,?)').run(token, u.id, Date.now() + SESSION_TTL);
-    return { token };
+    const { db } = ctx;
+    const setting = (k, d) => Number((db.prepare('SELECT value FROM settings WHERE key=?').get(k) || {}).value) || d;
+    const logLogin = (action) => db.prepare("INSERT INTO logs(type,user_name,module,action,target,ip) VALUES('login',?,'system',?,?,?)").run(String(username).slice(0, 60), action, String(username).slice(0, 60), ctx.ip);
+    if (ipFailures.count(ctx.ip) >= 20) {
+      logLogin('登录被拒绝(该IP失败次数过多)');
+      throw new HttpError(429, '登录失败次数过多，请10分钟后再试');
+    }
+    const u = db.prepare('SELECT * FROM users WHERE username=?').get(username);
+    if (u && u.locked_until && u.locked_until > Date.now()) {
+      logLogin('登录被拒绝(账号锁定中)');
+      throw new HttpError(423, `该账号因连续输错密码已被锁定，请 ${Math.ceil((u.locked_until - Date.now()) / 60000)} 分钟后再试，或联系管理员解锁`);
+    }
+    // 账号不存在时也执行一次哈希，避免通过响应时间探测账号 / hash even for unknown users to avoid timing-based enumeration
+    const ok = u ? verifyPassword(u, password) : (hashPassword(password, 'no-such-user'), false);
+    if (!ok) {
+      ipFailures.hit(ctx.ip);
+      if (u) {
+        const threshold = setting('lockout_threshold', 5);
+        const fails = (u.failed_count || 0) + 1;
+        if (fails >= threshold) {
+          db.prepare('UPDATE users SET failed_count=0, locked_until=? WHERE id=?').run(Date.now() + setting('lockout_minutes', 15) * 60000, u.id);
+          logLogin(`账号锁定(连续${fails}次密码错误)`);
+          throw new HttpError(423, `密码连续错误${fails}次，账号已锁定 ${setting('lockout_minutes', 15)} 分钟`);
+        }
+        db.prepare('UPDATE users SET failed_count=? WHERE id=?').run(fails, u.id);
+        logLogin('登录失败(密码错误)');
+        throw new HttpError(401, `账号或密码错误（再错 ${threshold - fails} 次将锁定账号）`);
+      }
+      logLogin('登录失败(账号不存在)');
+      throw new HttpError(401, '账号或密码错误');
+    }
+    if (u.status !== '启用') {
+      logLogin('登录失败(账号已禁用)');
+      throw new HttpError(403, '账号已被禁用，请联系管理员');
+    }
+    // 旧的弱密码登录后强制修改 / weak legacy passwords must be changed after login
+    const weak = passwordProblems(password, u.username).length > 0;
+    db.prepare("UPDATE users SET failed_count=0, locked_until=NULL, last_login_at=datetime('now','localtime'), must_change_password=CASE WHEN ? THEN 1 ELSE must_change_password END WHERE id=?").run(weak ? 1 : 0, u.id);
+    db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
+    const token = crypto.randomBytes(32).toString('hex');
+    db.prepare('INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,?)').run(token, u.id, Date.now() + SESSION_TTL);
+    logLogin(weak ? '登录成功(弱密码，要求修改)' : '登录成功');
+    return { token, must_change: weak || !!u.must_change_password };
+  }, { public: true });
+
+  // 登录页信息：密码规则与演示账号表（仅在开启展示且仍为演示密码时返回）
+  // login page info: password policy and demo account table (only when enabled and still on the demo password)
+  r.get('/api/public/login-info', (ctx) => {
+    const show = (ctx.db.prepare("SELECT value FROM settings WHERE key='show_demo_accounts'").get() || {}).value === '1';
+    const accounts = show ? ctx.db.prepare(`SELECT u.username, u.name, r.name role_name FROM users u LEFT JOIN roles r ON r.id=u.role_id
+      WHERE u.pw_is_default=1 AND u.status='启用' ORDER BY u.id`).all().filter((u) => DEMO_ACCOUNTS[u.username])
+      .sort((a, b) => Object.keys(DEMO_ACCOUNTS).indexOf(a.username) - Object.keys(DEMO_ACCOUNTS).indexOf(b.username))
+      .map((u) => ({ username: u.username, name: u.name, role_name: u.role_name, password: DEMO_ACCOUNTS[u.username].password })) : [];
+    return { policy: POLICY_TEXT, show_demo_accounts: show, accounts };
   }, { public: true });
 
   r.post('/api/logout', (ctx) => {
@@ -229,10 +311,13 @@ function register(r) {
   r.post('/api/password', (ctx) => {
     required(ctx.body, { old_password: '原密码', new_password: '新密码' });
     const u = ctx.db.prepare('SELECT * FROM users WHERE id=?').get(ctx.user.id);
-    if (hashPassword(ctx.body.old_password, u.salt).hash !== u.password_hash) throw new HttpError(400, '原密码错误');
-    if (String(ctx.body.new_password).length < 6) throw new HttpError(400, '新密码至少6位');
+    if (!verifyPassword(u, ctx.body.old_password)) throw new HttpError(400, '原密码错误');
+    assertStrongPassword(ctx.body.new_password, u.username);
+    if (ctx.body.new_password === ctx.body.old_password) throw new HttpError(400, '新密码不能与原密码相同');
     const { hash, salt } = hashPassword(ctx.body.new_password);
-    ctx.db.prepare('UPDATE users SET password_hash=?, salt=? WHERE id=?').run(hash, salt, u.id);
+    ctx.db.prepare("UPDATE users SET password_hash=?, salt=?, must_change_password=0, pw_is_default=0, password_changed_at=datetime('now','localtime') WHERE id=?").run(hash, salt, u.id);
+    // 其它设备上的登录全部失效 / sign out every other session
+    ctx.db.prepare('DELETE FROM sessions WHERE user_id=? AND token<>?').run(u.id, ctx.token);
     log(ctx, 'system', '修改本人密码', u.username);
     return { ok: true };
   });
@@ -246,7 +331,8 @@ function register(r) {
       if (can(u, e.module, 'view')) entities[k] = { key: k, module: e.module, title: e.title, fields: e.fields, readonly: !!e.readonly, pk: e.pk || 'id' };
     }
     return {
-      user: { id: u.id, username: u.username, name: u.name, role_code: u.role_code, role_name: u.role_name, scope: u.scope, employee_id: u.employee_id },
+      user: { id: u.id, username: u.username, name: u.name, role_code: u.role_code, role_name: u.role_name, scope: u.scope, employee_id: u.employee_id, must_change: u.must_change },
+      password_policy: POLICY_TEXT,
       perms: Object.fromEntries(modules.map((m) => [m.key, u.enabledModules.has(m.key) ? (u.perms[m.key] || []) : []])),
       modules, entities,
       company: { name: ctx.db.prepare("SELECT value FROM settings WHERE key='company_name'").get()?.value, name_en: ctx.db.prepare("SELECT value FROM settings WHERE key='company_name_en'").get()?.value },
@@ -348,18 +434,24 @@ function register(r) {
 
   r.get('/api/users', (ctx) => {
     need(ctx, 'system', 'view');
-    return { rows: ctx.db.prepare(`SELECT u.id,u.username,u.name,u.role_id,u.employee_id,u.status,u.created_at, r.name role_name, e.name employee_name
-      FROM users u LEFT JOIN roles r ON r.id=u.role_id LEFT JOIN employees e ON e.id=u.employee_id ORDER BY u.id`).all() };
+    const rows = ctx.db.prepare(`SELECT u.id,u.username,u.name,u.role_id,u.employee_id,u.status,u.created_at,u.last_login_at,u.password_changed_at,u.must_change_password,u.pw_is_default,u.locked_until,
+      r.name role_name, e.name employee_name FROM users u LEFT JOIN roles r ON r.id=u.role_id LEFT JOIN employees e ON e.id=u.employee_id ORDER BY u.id`).all();
+    for (const x of rows) x.locked = !!(x.locked_until && x.locked_until > Date.now());
+    return { rows, policy: POLICY_TEXT };
   });
   r.post('/api/users', (ctx) => {
     need(ctx, 'system', 'add');
     required(ctx.body, { username: '账号', name: '姓名', role_id: '角色' });
-    const { hash, salt } = hashPassword(ctx.body.password || '123456');
+    if (!/^[A-Za-z0-9_.-]{3,32}$/.test(ctx.body.username)) throw new HttpError(400, '账号只能由3-32位字母、数字、下划线、点或短横线组成');
+    // 管理员可指定强密码，否则系统生成随机临时密码；首次登录必须修改 / admin may set a strong password, otherwise a random temporary one; must change on first login
+    const temp = ctx.body.password ? String(ctx.body.password) : generatePassword(ctx.body.username);
+    assertStrongPassword(temp, ctx.body.username);
+    const { hash, salt } = hashPassword(temp);
     try {
-      const res = ctx.db.prepare("INSERT INTO users(username,name,password_hash,salt,role_id,employee_id,status) VALUES(?,?,?,?,?,?,'启用')")
+      const res = ctx.db.prepare("INSERT INTO users(username,name,password_hash,salt,role_id,employee_id,status,must_change_password) VALUES(?,?,?,?,?,?,'启用',1)")
         .run(ctx.body.username, ctx.body.name, hash, salt, ctx.body.role_id, ctx.body.employee_id || null);
       log(ctx, 'system', '新增账号', ctx.body.username);
-      return { id: Number(res.lastInsertRowid) };
+      return { id: Number(res.lastInsertRowid), temp_password: temp };
     } catch (e) {
       if (String(e.message).includes('UNIQUE')) throw new HttpError(409, '账号已存在');
       throw e;
@@ -374,6 +466,7 @@ function register(r) {
     if (u.id === ctx.user.id && b.status === '禁用') throw new HttpError(400, '不能禁用自己的账号');
     ctx.db.prepare('UPDATE users SET name=?, role_id=?, employee_id=?, status=? WHERE id=?')
       .run(b.name ?? u.name, b.role_id ?? u.role_id, b.employee_id === undefined ? u.employee_id : (b.employee_id || null), b.status ?? u.status, u.id);
+    if (b.unlock || b.status === '启用') ctx.db.prepare('UPDATE users SET failed_count=0, locked_until=NULL WHERE id=?').run(u.id);
     if (b.status === '禁用') ctx.db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id);
     log(ctx, 'system', '修改账号', u.username, b);
     return { ok: true };
@@ -382,11 +475,13 @@ function register(r) {
     need(ctx, 'system', 'edit');
     const u = ctx.db.prepare('SELECT * FROM users WHERE id=?').get(ctx.params.id);
     if (!u) throw new HttpError(404, '账号不存在');
-    const { hash, salt } = hashPassword(ctx.body.password || '123456');
-    ctx.db.prepare('UPDATE users SET password_hash=?, salt=? WHERE id=?').run(hash, salt, u.id);
+    const temp = ctx.body.password ? String(ctx.body.password) : generatePassword(u.username);
+    assertStrongPassword(temp, u.username);
+    const { hash, salt } = hashPassword(temp);
+    ctx.db.prepare('UPDATE users SET password_hash=?, salt=?, must_change_password=1, pw_is_default=0, failed_count=0, locked_until=NULL WHERE id=?').run(hash, salt, u.id);
     ctx.db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id);
     log(ctx, 'system', '重置密码', u.username);
-    return { ok: true };
+    return { ok: true, temp_password: temp };
   });
   r.post('/api/users/batch-role', (ctx) => {
     need(ctx, 'system', 'edit');
@@ -403,6 +498,21 @@ function register(r) {
   });
   r.put('/api/settings', (ctx) => {
     need(ctx, 'system', 'edit');
+    const b = ctx.body;
+    const cur = (k) => (b[k] !== undefined ? String(b[k]) : (ctx.db.prepare('SELECT value FROM settings WHERE key=?').get(k) || {}).value);
+    const allowed = new Set(['company_name', 'company_name_en', 'quote_min_profit', 'rate_api_url', 'rate_auto_hours', 'rate_max_change', 'mail_fetch_minutes', 'mail_initial_sync',
+      'show_demo_accounts', 'mail_allow_private_hosts', 'lockout_threshold', 'lockout_minutes']);
+    for (const k of Object.keys(b)) if (!allowed.has(k)) throw new HttpError(400, `未知参数：${k}`);
+    for (const k of ['quote_min_profit', 'rate_auto_hours', 'rate_max_change', 'mail_fetch_minutes', 'mail_initial_sync', 'lockout_threshold', 'lockout_minutes']) {
+      if (b[k] !== undefined && !(Number(b[k]) >= 0 && Number(b[k]) <= 100000)) throw new HttpError(400, `参数 ${k} 必须是非负数字`);
+    }
+    if (b.lockout_threshold !== undefined && Number(b.lockout_threshold) < 3) throw new HttpError(400, '锁定阈值不能小于3次');
+    for (const k of ['show_demo_accounts', 'mail_allow_private_hosts']) if (b[k] !== undefined && !['0', '1'].includes(String(b[k]))) throw new HttpError(400, `参数 ${k} 只能是 0 或 1`);
+    if (b.rate_api_url !== undefined) {
+      let url;
+      try { url = new URL(String(b.rate_api_url)); } catch { throw new HttpError(400, '汇率接口地址格式错误'); }
+      if (url.protocol !== 'https:' && cur('mail_allow_private_hosts') !== '1') throw new HttpError(400, '汇率接口必须使用 https:// 地址');
+    }
     for (const [k, v] of Object.entries(ctx.body)) ctx.db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(k, String(v));
     log(ctx, 'system', '修改系统参数', '', ctx.body);
     return { ok: true };
@@ -448,6 +558,16 @@ function register(r) {
     if (can(user, 'quote', 'view') && user.scope !== 'designer') card('进行中报价', db.prepare(`SELECT COUNT(*) c FROM quotes WHERE status NOT IN ('已成交','已失效')${own}`).get().c, '#/quotes');
     if (can(user, 'order', 'view') && user.scope !== 'designer') card('未完成订单', db.prepare(`SELECT COUNT(*) c FROM orders WHERE status NOT IN ('已出货','已完成')${own}`).get().c, '#/orders');
 
+    // 安全提醒（管理员）/ security reminders for administrators
+    if (can(user, 'system', 'edit')) {
+      if ((db.prepare("SELECT value FROM settings WHERE key='show_demo_accounts'").get() || {}).value === '1') {
+        out.alerts.push({ level: 'warn', type: '安全提醒', text: '登录页正在公开展示演示账号与密码。正式使用前请在「系统权限管理 → 系统参数」中关闭，并让各账号修改密码。', link: '#/system?tab=settings' });
+      }
+      const demo = db.prepare("SELECT COUNT(*) c FROM users WHERE pw_is_default=1 AND status='启用'").get().c;
+      if (demo) out.alerts.push({ level: 'warn', type: '安全提醒', text: `${demo} 个账号仍在使用公开的演示密码，正式使用前请逐一重置或由本人修改。`, link: '#/system?tab=users' });
+      const locked = db.prepare('SELECT COUNT(*) c FROM users WHERE locked_until > ?').get(Date.now()).c;
+      if (locked) out.alerts.push({ level: 'danger', type: '安全提醒', text: `${locked} 个账号因连续输错密码被锁定，请核实是否存在暴力破解。`, link: '#/system?tab=users' });
+    }
     // 订单变更联动待办 / pending change tasks for my department
     const deptPerm = { 采购: ['purchase', 'edit'], 生产: ['production', 'edit'], 财务: ['receivable', 'edit'], 业务: ['order', 'edit'] };
     const tasks = db.prepare(`SELECT t.*, o.order_no, c.change_no FROM change_tasks t JOIN orders o ON o.id=t.order_id JOIN order_changes c ON c.id=t.change_id WHERE t.status='待处理' ORDER BY t.id`).all()
@@ -509,4 +629,4 @@ function saveRole(ctx, id) {
   }
 }
 
-module.exports = { register, loadUser, scopeClause, listEntity };
+module.exports = { register, loadUser, scopeClause, listEntity, assertPasswordFresh };

@@ -18,6 +18,7 @@ const { buildMessage } = require('../server/mail');
 const { startMockMail, USERS: MOCK_USERS } = require('../tests/mock-mail-server');
 const { renderSamplePng } = require('./sample-art');
 const C = require('./demo-catalog');
+const { DEMO_ACCOUNTS } = require('../server/security');
 
 const DAY = 86400000;
 const HOUR = 3600000;
@@ -183,7 +184,7 @@ async function seedDemo({ dbFile, days = 180, seed = 20261104, log = () => {} })
       for (const [no, name, dept, pos, username, role] of C.STAFF) {
         let e = db.prepare('SELECT id FROM employees WHERE emp_no=?').get(no);
         if (!e) e = await api('hr1', 'POST', '/api/e/employee', { emp_no: no, name, dept_id: depts[dept], position: pos, phone: '1390000' + no.slice(1), hire_date: dateStr(simNow - rng.int(200, 900) * DAY), status: '在职' });
-        if (username && !db.prepare('SELECT 1 FROM users WHERE username=?').get(username)) await api('admin', 'POST', '/api/users', { username, name, role_id: ref.role[role], employee_id: e.id, password: '123456' });
+        if (username && !db.prepare('SELECT 1 FROM users WHERE username=?').get(username)) await api('admin', 'POST', '/api/users', { username, name, role_id: ref.role[role], employee_id: e.id, password: DEMO_ACCOUNTS[username].password });
       }
       for (const e of (await api('hr1', 'GET', '/api/e/employee?size=100')).rows) ref.emp[e.emp_no] = e.id;
       await api('hr1', 'PUT', `/api/e/employee/${ref.emp.E009}`, { remark: '负责员工入离职与考勤' });
@@ -224,6 +225,8 @@ async function seedDemo({ dbFile, days = 180, seed = 20261104, log = () => {} })
         if (!row) row = await api(sales, 'POST', '/api/e/customer', { code, name, country, contact, email, phone: '+' + rng.int(10, 99) + ' ' + rng.int(100000000, 999999999), address: `${port}`, level, source, remark: `常用目的港：${port}` });
         ref.cust[code] = { id: row.id, code, name: row.name, sales, cur, port, contact, email, level };
       }
+      // 模拟邮件服务器在本机 / the mock mail server runs locally
+      await api('admin', 'PUT', '/api/settings', { mail_allow_private_hosts: '1' });
       for (const [u, email] of Object.entries(C.MAILBOX)) {
         const name = db.prepare('SELECT name FROM users WHERE username=?').get(u).name;
         const a = await api(u, 'POST', '/api/mail-accounts', { email, display_name: `${name} | Yonlink Ceramics`, smtp_host: '127.0.0.1', smtp_port: mock.ports.smtp, smtp_secure: 'none', imap_host: '127.0.0.1', imap_port: mock.ports.imap, imap_secure: 'none', password: MOCK_USERS[email] });
@@ -236,7 +239,7 @@ async function seedDemo({ dbFile, days = 180, seed = 20261104, log = () => {} })
     const users = ['admin', 'sales1', 'sales2', 'sales3', 'manager1', 'designer1', 'designer2', 'designer3', 'purchase1', 'prod1', 'finance1', 'hr1'];
     for (let d = 1; d < days; d += 14) {
       at(day(d, 8.4), async () => {
-        for (const u of users) await api(u, 'POST', '/api/login', { username: u, password: '123456' });
+        for (const u of users) await api(u, 'POST', '/api/login', { username: u, password: DEMO_ACCOUNTS[u].password });
         if (rng.chance(0.5)) await api('x', 'POST', '/api/login', { username: rng.pick(users), password: 'wrong-pass' }, { allow: [401] });
       });
     }

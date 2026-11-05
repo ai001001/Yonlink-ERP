@@ -31,7 +31,7 @@ test.after(() => srv.close());
 
 // ===================== 系统权限 / system =====================
 test('TC-SYS-01 登录：正确密码成功，错误密码失败，未登录访问返回401', async () => {
-  const bad = await fetch(srv.base + '/api/login', { method: 'POST', body: JSON.stringify({ username: 'admin', password: 'wrong' }) });
+  const bad = await fetch(srv.base + '/api/login', { method: 'POST', body: JSON.stringify({ username: 'manager1', password: 'wrong' }) });
   assert.equal(bad.status, 401);
   const anon = await fetch(srv.base + '/api/meta');
   assert.equal(anon.status, 401);
@@ -40,11 +40,15 @@ test('TC-SYS-01 登录：正确密码成功，错误密码失败，未登录访�
   assert.equal(me.data.user.role_code, 'admin');
 });
 
-test('TC-SYS-01b 基础数据包含登录页列出的全部 12 个演示账号', async () => {
-  const js = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'main.js'), 'utf8');
-  const listed = [...js.matchAll(/\['(\w+)', '[^']+'\]/g)].map((m) => m[1]).filter((u) => /^(admin|sales\d|manager\d|designer\d|purchase\d|prod\d|finance\d|hr\d)$/.test(u));
-  assert.equal(listed.length, 12, '登录页快捷账号数量');
-  for (const u of listed) assert.ok((await srv.login(u)).token, `${u} 可登录`);
+test('TC-SYS-01b 登录页演示账号表列出全部 12 个账号，且每个账号都能用表中密码登录', async () => {
+  const info = await (await fetch(srv.base + '/api/public/login-info')).json();
+  assert.equal(info.accounts.length, 12, '演示账号数量');
+  for (const a of info.accounts) {
+    const r = await fetch(srv.base + '/api/login', { method: 'POST', body: JSON.stringify({ username: a.username, password: a.password }) });
+    assert.equal(r.status, 200, `${a.username} 可登录`);
+    assert.ok(a.password.length >= 10 && /[A-Z]/.test(a.password) && /[^A-Za-z0-9]/.test(a.password), `${a.username} 为复杂密码`);
+  }
+  assert.ok(!JSON.stringify(info).includes('123456'));
 });
 
 test('TC-SYS-02 账号禁用后无法登录、重置密码', async () => {
@@ -53,8 +57,20 @@ test('TC-SYS-02 账号禁用后无法登录、重置密码', async () => {
   assert.equal((await admin.put('/api/users/' + hrUser.id, { status: '禁用' })).status, 200);
   await assert.rejects(srv.login('hr1'), /禁用/);
   assert.equal((await admin.put('/api/users/' + hrUser.id, { status: '启用' })).status, 200);
-  assert.equal((await admin.post(`/api/users/${hrUser.id}/reset-password`, { password: '654321' })).status, 200);
-  hr = await srv.login('hr1', '654321');
+  assert.equal((await admin.post(`/api/users/${hrUser.id}/reset-password`, { password: '654321' })).status, 400, '弱密码被拒绝');
+  const reset = await admin.post(`/api/users/${hrUser.id}/reset-password`, {});
+  assert.equal(reset.status, 200);
+  const temp = reset.data.temp_password;
+  assert.ok(temp.length >= 14, '系统生成随机临时密码');
+  const tmpHr = await srv.login('hr1', temp);
+  assert.equal(tmpHr.must_change, true, '临时密码须修改');
+  const blocked = await tmpHr.get('/api/e/employee');
+  assert.equal(blocked.status, 403);
+  assert.equal(blocked.data.code, 'MUST_CHANGE_PASSWORD');
+  assert.equal((await tmpHr.post('/api/password', { old_password: temp, new_password: 'hr1-Strong#2026' })).status, 400, '新密码不能包含账号名');
+  assert.equal((await tmpHr.post('/api/password', { old_password: temp, new_password: 'Ren$Shi#8462q' })).status, 200);
+  hr = await srv.login('hr1', 'Ren$Shi#8462q');
+  assert.equal(hr.must_change, false);
   assert.ok(hr.token);
 });
 
@@ -81,9 +97,12 @@ test('TC-SYS-05 角色权限矩阵新增与批量授权', async () => {
   assert.equal(bad.status, 400);
   const u = await admin.post('/api/users', { username: 'qc1', name: '验货员1', role_id: r.data.id });
   assert.equal(u.status, 200);
+  assert.ok(u.data.temp_password, '新账号返回一次性临时密码');
   const b = await admin.post('/api/users/batch-role', { ids: [u.data.id], role_id: r.data.id });
   assert.equal(b.data.count, 1);
-  const qc = await srv.login('qc1');
+  const first = await srv.login('qc1', u.data.temp_password);
+  await first.post('/api/password', { old_password: u.data.temp_password, new_password: 'Yan$Huo#5307k' });
+  const qc = await srv.login('qc1', 'Yan$Huo#5307k');
   assert.equal((await qc.get('/api/orders')).status, 200);
   assert.equal((await qc.get('/api/quotes')).status, 403);
 });

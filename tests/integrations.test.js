@@ -61,6 +61,8 @@ test.before(async () => {
   await new Promise((r) => rateSrv.listen(0, '127.0.0.1', r));
   S.rateUrl = `http://127.0.0.1:${rateSrv.address().port}/latest`;
   [admin, sales1, sales2, designer1, designer2] = await Promise.all(['admin', 'sales1', 'sales2', 'designer1', 'designer2'].map((u) => srv.login(u)));
+  // 模拟邮件服务器在本机，需开启“允许内网邮件服务器” / mock mail server runs locally, so allow private hosts
+  await admin.put('/api/settings', { mail_allow_private_hosts: '1' });
 });
 test.after(async () => {
   await srv.close();

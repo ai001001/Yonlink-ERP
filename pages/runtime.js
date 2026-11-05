@@ -6,7 +6,7 @@
  */
 (() => {
   /** 演示数据版本，结构变化时递增以重置旧数据 / bump to reset stored demo data after schema changes */
-  const DEMO_VERSION = '3';
+  const DEMO_VERSION = '4';
   const IDB_NAME = 'yonlink-erp-demo';
   const cache = {};
   const nativeFetch = window.fetch.bind(window);
@@ -85,6 +85,7 @@
   // ---------- 启动后台 / boot backend ----------
   let router;
   let loadUser;
+  let assertPasswordFresh;
   let HttpError;
   let db;
   const ready = (async () => {
@@ -112,12 +113,14 @@
     db = load('server/db.js').openDb(':memory:');
     router = new http.Router();
     for (const m of ['base', 'sales', 'orders', 'finance', 'reports', 'integrations']) load(`server/routes/${m}.js`).register(router);
-    loadUser = load('server/routes/base.js').loadUser;
+    ({ loadUser, assertPasswordFresh } = load('server/routes/base.js'));
     if (fromDemo) {
       // 演示版密码算法与服务器不同：统一重置为 123456；清除会话与真实邮箱账户 / reset passwords for the demo hash, drop sessions & mailbox accounts
       const { hashPassword } = load('server/db.js');
-      for (const u of db.prepare('SELECT id FROM users').all()) {
-        const { hash, salt } = hashPassword('123456');
+      const { DEMO_ACCOUNTS } = load('server/security.js');
+      for (const u of db.prepare('SELECT id, username FROM users').all()) {
+        if (!DEMO_ACCOUNTS[u.username]) continue;
+        const { hash, salt } = hashPassword(DEMO_ACCOUNTS[u.username].password);
         db.prepare('UPDATE users SET password_hash=?, salt=? WHERE id=?').run(hash, salt, u.id);
       }
       db.exec('DELETE FROM sessions; DELETE FROM mail_accounts;');
@@ -159,7 +162,7 @@
       const m = router.match(method, decodeURIComponent(url.pathname));
       if (!m) throw new HttpError(404, '接口不存在');
       const auth = headers.authorization || headers.Authorization || '';
-      const token = auth.startsWith('Bearer ') ? auth.slice(7) : (url.searchParams.get('token') || '');
+      const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
       let body = {};
       if (['POST', 'PUT'].includes(method) && bodyText) {
         try { body = JSON.parse(bodyText); } catch { throw new HttpError(400, '请求数据格式错误（需要 JSON）'); }
@@ -167,6 +170,7 @@
       const ctx = { db, config: { secret: 'browser-demo' }, params: m.params, query: Object.fromEntries(url.searchParams), token, ip: 'browser', body };
       ctx.user = loadUser(db, token);
       if (!m.opts.public && !ctx.user) throw new HttpError(401, '登录已失效，请重新登录');
+      assertPasswordFresh(ctx, url.pathname);
       const result = await m.handler(ctx);
       if (result && result.__file) {
         const f = result.__file;
@@ -179,7 +183,7 @@
     } catch (e) {
       if (e instanceof HttpError) return json(e.status, { error: e.message, ...(e.extra || {}) });
       console.error('[演示版后台错误]', e);
-      return json(500, { error: '内部错误：' + e.message });
+      return json(500, { error: '内部错误，请刷新页面或重置演示数据后重试' });
     }
   }
 

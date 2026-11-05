@@ -9,7 +9,7 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
-const SERVER_FILES = ['http.js', 'core.js', 'db.js', 'entities.js', 'xlsx.js', 'mail.js', 'rates.js',
+const SERVER_FILES = ['security.js', 'http.js', 'core.js', 'db.js', 'entities.js', 'xlsx.js', 'mail.js', 'rates.js',
   'routes/base.js', 'routes/sales.js', 'routes/orders.js', 'routes/finance.js', 'routes/reports.js', 'routes/integrations.js'];
 
 /**
@@ -50,7 +50,10 @@ const marker = '<script src="js/core.js"></script>';
 if (!html.includes(marker)) throw new Error('index.html 中找不到 js/core.js 引用');
 fs.writeFileSync(indexFile, html
   .replace(marker, `<script src="vendor/sql-wasm.js"></script>\n  <script src="js/backend.js"></script>\n  ${marker}`)
-  .replace('<title>永联陶瓷工贸ERP</title>', '<title>永联陶瓷工贸ERP（在线演示）</title>'));
+  .replace('<title>永联陶瓷工贸ERP</title>', '<title>永联陶瓷工贸ERP（在线演示）</title>')
+  // 演示版需要运行 WebAssembly 版 SQLite 并从浏览器获取汇率 / the demo runs WebAssembly SQLite and fetches rates from the browser
+  .replace("script-src 'self';", "script-src 'self' 'wasm-unsafe-eval';")
+  .replace("connect-src 'self';", "connect-src 'self' https://open.er-api.com https://api.frankfurter.app;"));
 fs.writeFileSync(path.join(DIST, '.nojekyll'), '');
 
 // 生成半年模拟业务数据（--no-data 跳过）/ generate six months of simulated data (skip with --no-data)

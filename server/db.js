@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
+const { DEMO_ACCOUNTS } = require('./security');
 
 /** 功能权限动作 / Permission actions */
 const ACTIONS = ['view', 'add', 'edit', 'delete', 'export', 'print', 'audit'];
@@ -211,8 +212,9 @@ function seed(db) {
     ['designer3', '苏雅', 'designer', 'E016'],
   ];
   for (const [u, name, role, emp] of users) {
-    const { hash, salt } = hashPassword('123456');
-    ins('INSERT INTO users(username,name,password_hash,salt,role_id,employee_id) VALUES(?,?,?,?,?,?)', u, name, hash, salt, roleId(role), empId(emp));
+    // 演示账号使用各自的复杂密码，并标记为“演示密码”/ demo accounts get individual strong passwords, flagged as demo
+    const { hash, salt } = hashPassword(DEMO_ACCOUNTS[u].password);
+    ins('INSERT INTO users(username,name,password_hash,salt,role_id,employee_id,pw_is_default) VALUES(?,?,?,?,?,?,1)', u, name, hash, salt, roleId(role), empId(emp));
   }
 
   const sups = [
@@ -277,6 +279,7 @@ function seed(db) {
   ];
   for (const i of inv) ins('INSERT INTO inventory(code,name,category,unit,qty,unit_cost,safety_qty,max_qty) VALUES(?,?,?,?,?,?,?,?)', ...i);
 
+  ins("INSERT OR REPLACE INTO settings(key,value) VALUES('show_demo_accounts','1')");
   ins("INSERT INTO settings(key,value) VALUES('quote_min_profit','15')");
   ins("INSERT INTO settings(key,value) VALUES('company_name','永联陶瓷工艺品有限公司')");
   ins("INSERT INTO settings(key,value) VALUES('company_name_en','YONLINK CERAMIC CRAFTS CO., LTD.')");
@@ -294,6 +297,12 @@ const ADDED_COLUMNS = [
   ['mails', 'mail_date', 'TEXT'],
   ['mails', 'attachments', 'TEXT'],
   ['samples', 'locked_at', 'TEXT'],
+  ['users', 'must_change_password', 'INTEGER DEFAULT 0'],
+  ['users', 'pw_is_default', 'INTEGER DEFAULT 0'],
+  ['users', 'failed_count', 'INTEGER DEFAULT 0'],
+  ['users', 'locked_until', 'INTEGER'],
+  ['users', 'password_changed_at', 'TEXT'],
+  ['users', 'last_login_at', 'TEXT'],
 ];
 
 /** 新增系统参数默认值 / Default values for settings added after v1 */
@@ -303,6 +312,10 @@ const DEFAULT_SETTINGS = {
   rate_max_change: '30',
   mail_fetch_minutes: '10',
   mail_initial_sync: '50',
+  show_demo_accounts: '0',
+  mail_allow_private_hosts: '0',
+  lockout_threshold: '5',
+  lockout_minutes: '15',
 };
 
 /**

@@ -266,23 +266,52 @@
       body.querySelectorAll('[data-delrole]').forEach((b) => { b.onclick = async () => { if (await confirmBox('确定删除该角色？')) { try { await del('/api/roles/' + b.dataset.delrole); ERP.navigate(); } catch (e) { toast(e.message, 'error'); } } }; });
     }
     if (tab === 'users') {
-      const [{ rows }, roles, emps] = await Promise.all([get('/api/users'), ERP.options('role', true), ERP.options('employee', true)]);
+      const [{ rows, policy }, roles, emps] = await Promise.all([get('/api/users'), ERP.options('role', true), ERP.options('employee', true)]);
+      /** 一次性显示临时密码 / show a temporary password once */
+      const showTemp = (title, username, pw) => modal({
+        title, body: `<div class="alert warn"><span>请把以下临时密码通过安全渠道告知 <b>${esc(username)}</b>。此密码只显示这一次，对方首次登录后必须修改。</span></div>
+          <div style="font-size:20px;text-align:center;margin:12px 0"><code style="user-select:all;padding:6px 12px;background:var(--bg);border-radius:6px">${esc(pw)}</code></div>`,
+      });
+      const secTag = (u) => (u.locked ? tag('已锁定') : u.must_change_password ? '<span class="tag warn">待改密</span>' : u.pw_is_default ? '<span class="tag warn">演示密码</span>' : '<span class="tag ok">正常</span>');
       body.innerHTML = `<div class="toolbar" style="margin-bottom:10px">${can('system', 'add') ? '<button class="btn primary" id="addUser">＋ 新增账号</button>' : ''}
         ${editable ? `<span class="muted small">批量授权：勾选账号后选择角色</span><select id="batchRole" style="width:160px">${ERP.optHtml(roles, '')}</select><button class="btn" id="batchBtn">批量授权</button>` : ''}</div>
-        ${tableHtml(['', '账号', '姓名', '角色', '绑定员工', '状态', '创建时间', '操作'], rows.map((u) => [`<input type="checkbox" data-uid="${u.id}">`, esc(u.username), esc(u.name), esc(u.role_name), esc(u.employee_name), tag(u.status), esc(u.created_at),
-          editable ? `<button class="btn small" data-eu="${u.id}">编辑</button> <button class="btn small" data-rp="${u.id}">重置密码</button> <button class="btn small ${u.status === '启用' ? 'danger' : ''}" data-tg="${u.id}">${u.status === '启用' ? '禁用' : '启用'}</button>` : '']))}`;
+        <div class="alert info">密码规则：${esc(policy)}。连续输错密码将自动锁定账号；重置密码会生成一次性临时密码，员工首次登录必须修改。</div>
+        ${tableHtml(['', '账号', '姓名', '角色', '绑定员工', '状态', '密码安全', '最近登录', '操作'], rows.map((u) => [`<input type="checkbox" data-uid="${u.id}">`, esc(u.username), esc(u.name), esc(u.role_name), esc(u.employee_name), tag(u.status),
+          secTag(u), esc(u.last_login_at), editable ? `<button class="btn small" data-eu="${u.id}">编辑</button> <button class="btn small" data-rp="${u.id}">重置密码</button>
+          ${u.locked ? `<button class="btn small primary" data-unlock="${u.id}">解锁</button>` : ''} <button class="btn small ${u.status === '启用' ? 'danger' : ''}" data-tg="${u.id}">${u.status === '启用' ? '禁用' : '启用'}</button>` : '']))}`;
       const userForm = (u) => `<div class="form-grid"><label><span class="req">账号</span><input name="username" value="${esc(u?.username)}" ${u ? 'disabled' : ''}></label>
         <label><span class="req">姓名</span><input name="name" value="${esc(u?.name)}"></label>
         <label><span class="req">角色</span><select name="role_id">${ERP.optHtml(roles, u?.role_id)}</select></label>
         <label><span>绑定员工（设计师/业务员必须绑定）</span><select name="employee_id">${ERP.optHtml(emps, u?.employee_id)}</select></label>
-        ${u ? '' : '<label><span>初始密码（默认123456）</span><input name="password" type="password"></label>'}</div>`;
+        ${u ? '' : '<label><span>初始密码（留空则自动生成强密码）</span><input name="password" type="password" autocomplete="new-password"></label>'}</div>`;
       const au = body.querySelector('#addUser');
-      if (au) au.onclick = () => modal({ title: '新增账号', body: userForm(null), buttons: [{ text: '保存', cls: 'primary', onClick: async (m) => { await post('/api/users', readForm(m.el)); m.close(); toast('账号已创建', 'ok'); ERP.navigate(); } }] });
+      if (au) {
+        au.onclick = () => modal({
+          title: '新增账号', body: userForm(null), buttons: [{
+            text: '保存', cls: 'primary', onClick: async (m) => {
+              const f = readForm(m.el);
+              const r = await post('/api/users', f);
+              m.close();
+              ERP.navigate();
+              if (!f.password) showTemp('账号已创建：临时密码', f.username, r.temp_password); else toast('账号已创建，首次登录需修改密码', 'ok');
+            },
+          }],
+        });
+      }
       body.querySelectorAll('[data-eu]').forEach((b) => {
         const u = rows.find((x) => x.id === Number(b.dataset.eu));
         b.onclick = () => modal({ title: '编辑账号', body: userForm(u), buttons: [{ text: '保存', cls: 'primary', onClick: async (m) => { await put('/api/users/' + u.id, readForm(m.el)); m.close(); toast('已保存', 'ok'); ERP.navigate(); } }] });
       });
-      body.querySelectorAll('[data-rp]').forEach((b) => { b.onclick = async () => { if (await confirmBox('将密码重置为 123456？')) { await post(`/api/users/${b.dataset.rp}/reset-password`, {}); toast('密码已重置为123456', 'ok'); } }; });
+      body.querySelectorAll('[data-rp]').forEach((b) => {
+        const u = rows.find((x) => x.id === Number(b.dataset.rp));
+        b.onclick = async () => {
+          if (!(await confirmBox(`为 ${u.username} 生成新的临时密码？对方当前所有登录将被退出。`))) return;
+          const r = await post(`/api/users/${u.id}/reset-password`, {});
+          ERP.navigate();
+          showTemp('密码已重置：临时密码', u.username, r.temp_password);
+        };
+      });
+      body.querySelectorAll('[data-unlock]').forEach((b) => { b.onclick = async () => { await put('/api/users/' + b.dataset.unlock, { unlock: true }); toast('账号已解锁', 'ok'); ERP.navigate(); }; });
       body.querySelectorAll('[data-tg]').forEach((b) => {
         const u = rows.find((x) => x.id === Number(b.dataset.tg));
         b.onclick = async () => { try { await put('/api/users/' + u.id, { status: u.status === '启用' ? '禁用' : '启用' }); ERP.navigate(); } catch (e) { toast(e.message, 'error'); } };
@@ -304,7 +333,11 @@
         <label><span>汇率自动更新周期（小时，0=关闭）</span><input name="rate_auto_hours" type="number" value="${esc(s.rate_auto_hours)}"></label>
         <label><span>汇率异常波动阈值%（超过不自动采用）</span><input name="rate_max_change" type="number" value="${esc(s.rate_max_change)}"></label>
         <label><span>自动收信间隔（分钟，0=关闭）</span><input name="mail_fetch_minutes" type="number" value="${esc(s.mail_fetch_minutes)}"></label>
-        <label><span>新邮箱首次同步最近邮件数</span><input name="mail_initial_sync" type="number" value="${esc(s.mail_initial_sync)}"></label></div>
+        <label><span>新邮箱首次同步最近邮件数</span><input name="mail_initial_sync" type="number" value="${esc(s.mail_initial_sync)}"></label>
+        <label><span>登录页显示演示账号（正式使用请关闭）</span><select name="show_demo_accounts">${ERP.optHtml([{ id: '1', label: '显示' }, { id: '0', label: '不显示' }], s.show_demo_accounts, false)}</select></label>
+        <label><span>连续输错几次密码锁定账号</span><input name="lockout_threshold" type="number" min="3" value="${esc(s.lockout_threshold)}"></label>
+        <label><span>锁定时长（分钟）</span><input name="lockout_minutes" type="number" min="1" value="${esc(s.lockout_minutes)}"></label>
+        <label><span>允许内网/本机邮件服务器（有SSRF风险，仅内网部署时开启）</span><select name="mail_allow_private_hosts">${ERP.optHtml([{ id: '0', label: '不允许（推荐）' }, { id: '1', label: '允许' }], s.mail_allow_private_hosts, false)}</select></label></div>
         ${editable ? '<div style="margin-top:12px"><button class="btn primary" id="saveSet">保存参数</button></div>' : ''}`;
       const sb = body.querySelector('#saveSet');
       if (sb) sb.onclick = async () => { await put('/api/settings', readForm(body)); toast('参数已保存', 'ok'); await ERP.reloadMeta(); };

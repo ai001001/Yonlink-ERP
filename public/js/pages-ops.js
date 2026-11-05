@@ -97,7 +97,7 @@
     main.innerHTML = `${o.risk_lock ? '<div class="lock-banner">🔒 订单已被变更风控锁定：存在未处理的联动修正任务。锁定期间禁止再次修改订单、新增采购、新增布产、安排出货/报关出运。各部门处理完毕后自动解锁。</div>' : ''}
       <div class="panel"><div class="panel-head"><h2>${isNew ? '新建订单' : esc(o.order_no)} ${tag(o.status)} ${!isNew && !designer ? `<span class="tag ${o.risk.level === '高' ? 'danger' : o.risk.level === '中' ? 'warn' : 'ok'}">变更风险：${esc(o.risk.level)}</span>` : ''}</h2>
         <div class="toolbar" id="actions"></div></div>
-        <form class="form-grid" id="hdr" onsubmit="return false">
+        <form class="form-grid" id="hdr">
           <label><span class="req">客户</span><select name="customer_id" ${dis}>${optHtml(customers, o.customer_id)}</select></label>
           <label><span class="req">币种</span><select name="currency" ${dis}>${optHtml(currencies, o.currency, false)}</select></label>
           <label><span>贸易术语</span><select name="term" ${dis}>${optHtml(terms, o.term, false)}</select></label>
@@ -308,7 +308,7 @@
       <td style="width:90px"><input data-f="price" type="number" step="any" value="${esc(it.price)}" ${dis}></td><td class="num">${esc(it.received_qty || 0)}</td>
       <td>${editable ? '<button class="btn small danger" data-rm type="button">删</button>' : ''}</td></tr>`;
     main.innerHTML = `<div class="panel"><div class="panel-head"><h2>${isNew ? '新建采购单' : esc(p.po_no)} ${tag(p.status)} ${isNew ? '' : tag(p.qc_status)}</h2><div class="toolbar" id="actions"></div></div>
-      <form class="form-grid" id="hdr" onsubmit="return false">
+      <form class="form-grid" id="hdr">
         <label><span class="req">供应商</span><select name="supplier_id" ${dis}>${optHtml(suppliers, p.supplier_id)}</select></label>
         <label><span class="req">采购类型</span><select name="type" ${dis}>${optHtml(['原辅材料', '外购成品'], p.type, false)}</select></label>
         <label><span>关联销售订单（按单核算）</span><select name="order_id" ${dis}>${optHtml(orders, p.order_id)}</select></label>
