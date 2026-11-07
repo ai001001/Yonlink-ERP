@@ -39,8 +39,8 @@ function balance(db, invId, whId) {
  * @param {object} m {move_no, type, inventory_id, warehouse_id, qty, unit_cost, ref_no, remark, user_name}
  */
 function writeMove(db, m) {
-  db.prepare('INSERT INTO stock_moves(move_no,type,inventory_id,warehouse_id,qty,unit_cost,ref_no,remark,user_name) VALUES(?,?,?,?,?,?,?,?,?)')
-    .run(m.move_no || '', m.type, m.inventory_id, m.warehouse_id, round(m.qty, 4), num(m.unit_cost), m.ref_no || '', m.remark || '', m.user_name || '');
+  db.prepare('INSERT INTO stock_moves(move_no,type,inventory_id,warehouse_id,qty,unit_cost,ref_no,remark,user_name,order_item_id,shipment_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+    .run(m.move_no || '', m.type, m.inventory_id, m.warehouse_id, round(m.qty, 4), num(m.unit_cost), m.ref_no || '', m.remark || '', m.user_name || '', m.order_item_id || null, m.shipment_id || null);
 }
 
 /**

@@ -10,7 +10,7 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
 const SERVER_FILES = ['security.js', 'http.js', 'core.js', 'db.js', 'entities.js', 'xlsx.js', 'xlsx-read.js', 'migrate.js', 'stock.js', 'mail.js', 'rates.js',
-  'routes/base.js', 'routes/sales.js', 'routes/orders.js', 'routes/finance.js', 'routes/reports.js', 'routes/integrations.js', 'routes/migrate.js', 'routes/handover.js', 'routes/shipping.js', 'routes/ledger.js', 'routes/stock.js'];
+  'routes/base.js', 'routes/sales.js', 'routes/orders.js', 'routes/finance.js', 'routes/reports.js', 'routes/integrations.js', 'routes/migrate.js', 'routes/handover.js', 'routes/shipping.js', 'routes/ledger.js', 'routes/stock.js', 'routes/bominquiry.js'];
 
 /**
  * 递归复制目录 / Copy a directory recursively.

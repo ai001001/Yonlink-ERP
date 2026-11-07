@@ -141,6 +141,10 @@ CREATE TABLE IF NOT EXISTS inspections (id INTEGER PRIMARY KEY, insp_no TEXT UNI
   lot_qty INTEGER, sample_size INTEGER, critical INTEGER DEFAULT 0, major INTEGER DEFAULT 0, minor INTEGER DEFAULT 0, result TEXT DEFAULT '待验货', defects TEXT, remark TEXT,
   user_name TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
 CREATE TABLE IF NOT EXISTS inspection_items (id INTEGER PRIMARY KEY, inspection_id INTEGER, order_item_id INTEGER, item_no TEXT, check_qty INTEGER, defect_qty INTEGER, result TEXT, remark TEXT);
+CREATE TABLE IF NOT EXISTS bom_inquiries (id INTEGER PRIMARY KEY, inq_no TEXT UNIQUE, supplier_id INTEGER, status TEXT DEFAULT '待发送', sent_at TEXT, reply_date TEXT, valid_until TEXT,
+  remark TEXT, user_name TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
+CREATE TABLE IF NOT EXISTS bom_inquiry_items (id INTEGER PRIMARY KEY, inquiry_id INTEGER, source_type TEXT, source_id INTEGER, sample_id INTEGER, item_no TEXT, kind TEXT, name TEXT, spec TEXT,
+  unit TEXT, qty REAL, old_price REAL, price REAL, lead_days INTEGER, remark TEXT, adopted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS sample_parts (id INTEGER PRIMARY KEY, sample_id INTEGER, kind TEXT DEFAULT '配件', code TEXT, name TEXT, spec TEXT, qty REAL DEFAULT 1, per TEXT DEFAULT '每只',
   unit TEXT, unit_price REAL DEFAULT 0, supplier_id INTEGER, remark TEXT);
 CREATE TABLE IF NOT EXISTS sample_processes (id INTEGER PRIMARY KEY, sample_id INTEGER, seq INTEGER, name TEXT, supplier_id INTEGER, price REAL DEFAULT 0, remark TEXT);
@@ -422,6 +426,10 @@ const ADDED_COLUMNS = [
   ['order_items', 'package_plan_id', 'INTEGER'],
   // 批次6：物料默认仓库 / batch 6: default warehouse of an item
   ['inventory', 'warehouse_id', 'INTEGER'],
+  // 成品库存：物料关联货号；流水关联订单明细与出货单 / finished goods: item ↔ sample; moves ↔ order line & shipment
+  ['inventory', 'sample_id', 'INTEGER'],
+  ['stock_moves', 'order_item_id', 'INTEGER'],
+  ['stock_moves', 'shipment_id', 'INTEGER'],
 ];
 
 /** 新增系统参数默认值 / Default values for settings added after v1 */
@@ -436,6 +444,7 @@ const DEFAULT_SETTINGS = {
   lockout_threshold: '5',
   lockout_minutes: '15',
   ar_writeoff_max: '50',
+  fg_require_out_before_ship: '0',
 };
 
 /**

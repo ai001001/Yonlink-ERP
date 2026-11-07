@@ -5,7 +5,7 @@
  * @module server/routes/orders
  */
 const { HttpError } = require('../http');
-const { need, can, log, nextNo, tx, num, round, required, assertSampleUsable, assertSampleShippable, today } = require('../core');
+const { need, can, log, nextNo, tx, num, round, required, assertSampleUsable, assertSampleShippable, today, setting } = require('../core');
 const { docScope, filterItemsForDesigner, syncItems } = require('./sales');
 
 /** 订单头关键字段 / Key header fields watched by risk control */
@@ -555,6 +555,12 @@ function updateShipment(ctx, s, b) {
     assertNotLocked(ctx.db, s.order_id, '报关出运');
     if (insp !== '合格') throw new HttpError(409, `出货单${s.ship_no}验货合格后才能报关/出运（验货闭环）`);
     if (b.status === '已出运' && !(b.customs_no || s.customs_no)) throw new HttpError(400, '请填写报关单号');
+    if (b.status === '已出运' && setting(ctx.db, 'fg_require_out_before_ship', '0') === '1') {
+      // 参数开启时：出运前必须完成销售出库 / when enabled, goods must be issued from stock before departure
+      const left = ctx.db.prepare(`SELECT si.qty + COALESCE((SELECT SUM(m.qty) FROM stock_moves m WHERE m.shipment_id=si.shipment_id AND m.order_item_id=si.order_item_id AND m.type='销售出库'),0) r
+        FROM shipment_items si WHERE si.shipment_id=?`).all(s.id).filter((x) => x.r > 1e-9);
+      if (left.length) throw new HttpError(409, `出货单${s.ship_no}尚未完成销售出库，不能出运（系统参数要求先出库）`);
+    }
   }
   const fields = ['ship_date', 'port', 'dest_port', 'vessel', 'container_no', 'customs_no', 'forwarder_id', 'status', 'inspection_status', 'inspection_note', 'remark'];
   const set = fields.filter((f) => b[f] !== undefined);

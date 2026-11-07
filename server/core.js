@@ -173,4 +173,18 @@ function setting(db, key, def = '') {
   return r ? r.value : def;
 }
 
-module.exports = { today, can, need, log, nextNo, tx, num, round, required, assertSampleUsable, assertSampleShippable, setting };
+/**
+ * 默认包装方案同步到样品档案的包装资料，并取消同一样品的其它默认方案
+ * Sync a default package plan to the sample's packing fields and clear other defaults of that sample.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {object} m 方案（合并后的完整字段）/ the plan with all fields
+ * @param {number} [planId] 方案ID（新增时为空）/ plan id (empty when inserting)
+ */
+function syncDefaultPackage(db, m, planId) {
+  db.prepare("UPDATE sample_packages SET is_default='否' WHERE sample_id=? AND id<>?").run(m.sample_id, planId || -1);
+  db.prepare(`UPDATE samples SET pack_inner=?, pack_middle=?, pcs_per_carton=?, outer_l=?, outer_w=?, outer_h=?, cbm=?, gross_weight=?, net_weight=?,
+    package_req=COALESCE(?, package_req) WHERE id=?`).run(m.inner_qty ?? null, m.middle_qty ?? null, m.outer_qty, m.outer_l ?? null, m.outer_w ?? null, m.outer_h ?? null,
+    m.cbm ?? null, m.gw ?? null, m.nw ?? null, m.package_req || m.name || null, m.sample_id);
+}
+
+module.exports = { today, can, need, log, nextNo, tx, num, round, required, assertSampleUsable, assertSampleShippable, setting, syncDefaultPackage };

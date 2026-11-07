@@ -73,6 +73,7 @@ async function seedDemo({ dbFile, days = 180, seed = 20261104, log = () => {} })
   const startTime = today0 - days * DAY;
   let simNow = startTime + 8 * HOUR;
   const rng = makeRng(seed);
+  const round2 = (v) => Math.round(v * 100) / 100;
 
   // ---------- 时间机器：让系统以为“今天”是模拟日期 / time machine ----------
   class SimDate extends RealDate {
@@ -218,6 +219,41 @@ async function seedDemo({ dbFile, days = 180, seed = 20261104, log = () => {} })
         ref.sample[s.company_no] = s.id;
         await api('admin', 'POST', `/api/samples/${s.id}/images`, { name: `${s.company_no}-正面.png`, data: renderSamplePng(s).toString('base64') });
       }
+      // 样品明细（亿星：配件/包材/工序/多包装方案）/ sample BOM lines modelled on 亿星
+      const sups = db.prepare('SELECT id, name, type FROM suppliers ORDER BY id').all();
+      const packSup = (sups.find((x) => /包装|纸箱/.test(x.name + x.type)) || sups[0]).id;
+      for (const s of usableSamples().slice(0, 8)) {
+        const pcs = s.pcs_per_carton || 6;
+        await api('admin', 'POST', '/api/e/sample_part', { sample_id: s.id, kind: '配件', code: 'PJ-' + s.company_no.slice(3), name: rng.pick(['铜底座', '木底座', 'LED灯串', '金属挂钩']), qty: 1, per: '每只', unit: '个', unit_price: rng.int(15, 60) / 10, supplier_id: rng.pick(sups).id });
+        await api('admin', 'POST', '/api/e/sample_part', { sample_id: s.id, kind: '包材', code: 'BC-CT', name: '彩盒', qty: 1, per: '每只', unit: '个', unit_price: rng.int(8, 20) / 10, supplier_id: packSup });
+        await api('admin', 'POST', '/api/e/sample_part', { sample_id: s.id, kind: '包材', code: 'BC-WX', name: '五层外箱', qty: 1, per: '每箱', unit: '个', unit_price: rng.int(60, 120) / 10, supplier_id: packSup });
+        for (const [i, [name, price]] of [['注浆成型', 1.2], ['修坯', 0.6], ['施釉', 0.9], ['烧成', 1.5]].entries()) {
+          await api('admin', 'POST', '/api/e/sample_process', { sample_id: s.id, seq: i + 1, name, price, supplier_id: s.supplier_id });
+        }
+        await api('admin', 'POST', '/api/e/sample_package', { sample_id: s.id, name: '标准出口装', inner_qty: 1, outer_qty: pcs, outer_l: s.outer_l, outer_w: s.outer_w, outer_h: s.outer_h, gw: round2(pcs * 1.1 + 1), nw: round2(pcs * 1.1), package_req: s.package_req, is_default: '是' });
+        await api('admin', 'POST', '/api/e/sample_package', { sample_id: s.id, name: '电商小箱装', inner_qty: 1, outer_qty: Math.max(1, Math.floor(pcs / 2)), outer_l: s.outer_l, outer_w: s.outer_w, outer_h: Math.round(s.outer_h / 2), package_req: '电商快递加厚气泡袋', is_default: '否' });
+      }
+    });
+    // 包材/工序询价：两家比价后采用低价 / BOM inquiries to two suppliers, adopt the cheaper reply
+    at(day(12, 10), async () => {
+      const sups = db.prepare('SELECT id FROM suppliers ORDER BY id LIMIT 2').all().map((x) => x.id);
+      const lines = db.prepare("SELECT id FROM sample_parts WHERE kind='包材' ORDER BY id LIMIT 6").all().map((x) => ({ source_type: 'part', source_id: x.id, qty: 2000 }))
+        .concat(db.prepare("SELECT id FROM sample_processes WHERE name='施釉' ORDER BY id LIMIT 2").all().map((x) => ({ source_type: 'process', source_id: x.id })));
+      if (!lines.length) return;
+      const qs = [];
+      for (const sid of sups) {
+        const q = await api('purchase1', 'POST', '/api/bom-inquiries', { supplier_id: sid, lines, remark: '年度包材/工序比价' });
+        await api('purchase1', 'POST', `/api/bom-inquiries/${q.id}/sent`);
+        qs.push(q);
+      }
+      at(later(3, 10), async () => {
+        for (const q of qs) await api('purchase1', 'PUT', `/api/bom-inquiries/${q.id}/reply`, { items: q.items.map((it) => ({ id: it.id, price: round2((it.old_price || 1) * (0.85 + rng.next() * 0.3)), lead_days: rng.int(5, 20) })) });
+        for (const q of qs) {
+          const full = await api('purchase1', 'GET', `/api/bom-inquiries/${q.id}`);
+          const win = full.items.filter((it) => it.lowest && !it.others.some((o) => o.price === it.price && o.inq_no < full.inq_no)).map((it) => it.id);
+          if (win.length) await api('purchase1', 'POST', `/api/bom-inquiries/${q.id}/adopt`, { item_ids: win });
+        }
+      });
     });
     at(day(0, 11), async () => {
       for (const [code, name, country, contact, email, sales, level, source, cur, port] of C.CUSTOMERS) {
@@ -654,11 +690,16 @@ async function seedDemo({ dbFile, days = 180, seed = 20261104, log = () => {} })
       const split = total > 1500 && !ord.splitDone;
       const items = split ? remaining.map((x) => ({ ...x, qty: Math.floor(x.qty * 0.6) })).filter((x) => x.qty > 0) : remaining;
       ord.splitDone = ord.splitDone || split;
+      // 成品按订单入库（生产完工）/ finished goods into stock per order
+      const fg = await api('prod1', 'GET', `/api/orders/${ord.id}/fg`);
+      const fgIn = fg.lines.filter((l) => l.qty > l.in_qty).map((l) => ({ order_item_id: l.order_item_id, qty: l.qty - l.in_qty }));
+      if (fgIn.length) await api('prod1', 'POST', `/api/orders/${ord.id}/fg-in`, { items: fgIn, remark: '生产完工入库' });
       const sh = await api(ord.u, 'POST', `/api/orders/${ord.id}/shipments`, {
         ship_date: dateStr(simNow + 5 * DAY), port: '厦门', dest_port: ord.c.port, vessel: rng.pick(C.VESSELS), forwarder_id: rng.pick(ref.fwd),
         container_no: `${rng.pick(['TGHU', 'MSKU', 'CSNU', 'OOLU'])}${rng.int(1000000, 9999999)}`, items, remark: split ? '分批出货第一批' : '',
       });
       await api('admin', 'POST', '/api/e/agency_record', { agency_id: rng.pick(ref.fwd), content: `订舱 ${o.order_no} / ${sh.ship_no}，目的港 ${ord.c.port}` });
+      await api(ord.u, 'POST', `/api/shipments/${sh.id}/fg-out`, {}, { allow: [409] });
       at(later(1, 10), async () => {
         if (rng.chance(0.12)) {
           await api(ord.u, 'PUT', `/api/shipments/${sh.id}`, { inspection_status: '不合格', inspection_note: rng.pick(['外箱唛头印刷错误，已重新贴唛', '抽检发现3只釉面针孔，已挑出补货']) });

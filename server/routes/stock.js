@@ -6,7 +6,7 @@
  * @module server/routes/stock
  */
 const { HttpError } = require('../http');
-const { need, log, nextNo, tx, num, round, today } = require('../core');
+const { need, log, nextNo, tx, num, round, today, setting } = require('../core');
 const stock = require('../stock');
 
 /**
@@ -131,6 +131,83 @@ function saveInspection(ctx, id) {
     log(ctx, 'order', old ? '修改验货单' : '新增验货单', v.insp_no, `${o.order_no} ${result}`);
     return v;
   });
+}
+
+// ===================== 成品库存（按订单）/ finished goods per order =====================
+
+/**
+ * 货号对应的成品库存档案（没有则自动建，类别“成品”）/ Finished-goods inventory row of a sample (created on demand).
+ * @param {object} db
+ * @param {number} sampleId
+ * @returns {object}
+ */
+function fgItem(db, sampleId) {
+  let inv = db.prepare('SELECT * FROM inventory WHERE sample_id=? ORDER BY id LIMIT 1').get(sampleId);
+  if (inv) return inv;
+  const s = db.prepare('SELECT * FROM samples WHERE id=?').get(sampleId);
+  if (!s) throw new HttpError(400, '货号不存在');
+  const ex = db.prepare('SELECT * FROM inventory WHERE code=?').get(s.company_no);
+  if (ex) {
+    db.prepare('UPDATE inventory SET sample_id=? WHERE id=?').run(s.id, ex.id);
+    return { ...ex, sample_id: s.id };
+  }
+  const cost = num(s.factory_price) > 0 ? num(s.factory_price) : num(s.material_cost) + num(s.labor_cost);
+  const id = Number(db.prepare("INSERT INTO inventory(code,name,category,unit,qty,unit_cost,sample_id,warehouse_id) VALUES(?,?,'成品',?,0,?,?,?)")
+    .run(s.company_no, s.name, s.unit || 'PC', cost, s.id, stock.defaultWarehouse(db)).lastInsertRowid);
+  return db.prepare('SELECT * FROM inventory WHERE id=?').get(id);
+}
+
+/** 某订单明细的成品在库（按订单分配）/ finished goods allocated to an order line */
+const lineStock = (db, oiId) => round(db.prepare('SELECT COALESCE(SUM(qty),0) v FROM stock_moves WHERE order_item_id=?').get(oiId).v, 4);
+/** 某出货单某明细已出库数量（扣除退货）/ net quantity issued for a shipment line */
+const shipOut = (db, shipId, oiId, type) => round(-db.prepare('SELECT COALESCE(SUM(qty),0) v FROM stock_moves WHERE shipment_id=? AND order_item_id=? AND type=?').get(shipId, oiId, type).v, 4);
+
+/**
+ * 订单成品进出情况 / Finished-goods status of an order.
+ * @param {object} ctx
+ * @param {any} id 订单ID / order id
+ * @returns {object}
+ */
+function orderFg(ctx, id) {
+  const { getOrder } = require('./orders');
+  const o = getOrder(ctx, id);
+  const { db } = ctx;
+  const sum = (oi, type) => round(db.prepare('SELECT COALESCE(SUM(qty),0) v FROM stock_moves WHERE order_item_id=? AND type=?').get(oi, type).v, 4);
+  const lines = o.items.map((i) => ({
+    order_item_id: i.id, item_no: i.item_no, description: i.description, qty: i.qty, produced_qty: i.produced_qty, shipped_qty: i.shipped_qty, departed_qty: i.departed_qty,
+    in_qty: sum(i.id, '产品入库'), out_qty: -sum(i.id, '销售出库'), return_qty: sum(i.id, '销售退货'), stock: lineStock(db, i.id),
+  }));
+  const shipments = (o.shipments || []).filter((s) => s.status !== '已取消').map((s) => ({
+    id: s.id, ship_no: s.ship_no, status: s.status,
+    lines: s.items.map((si) => ({ order_item_id: si.order_item_id, item_no: si.item_no, qty: si.qty, out: shipOut(db, s.id, si.order_item_id, '销售出库'), returned: round(db.prepare("SELECT COALESCE(SUM(qty),0) v FROM stock_moves WHERE shipment_id=? AND order_item_id=? AND type='销售退货'").get(s.id, si.order_item_id).v, 4) })),
+  }));
+  for (const s of shipments) s.out_done = s.lines.every((l) => l.out >= l.qty - 1e-9);
+  return { order_id: o.id, order_no: o.order_no, lines, shipments, require_out: setting(db, 'fg_require_out_before_ship', '0') === '1' };
+}
+
+/**
+ * 出货单销售出库（每行出到“出货数量”为止，不超过该订单明细的在库数）/ Issue finished goods for a shipment.
+ * @param {object} ctx
+ * @param {object} sh 出货单 / shipment row
+ * @param {number|null} whId 仓库（空=自动）/ warehouse
+ * @returns {number} 出库行数 / lines issued
+ */
+function issueShipment(ctx, sh, whId) {
+  const { db } = ctx;
+  if (sh.status === '已取消') throw new HttpError(409, `出货单${sh.ship_no}已取消`);
+  const items = db.prepare('SELECT si.*, oi.sample_id, oi.item_no FROM shipment_items si JOIN order_items oi ON oi.id=si.order_item_id WHERE si.shipment_id=?').all(sh.id);
+  let n = 0;
+  for (const si of items) {
+    const need = round(num(si.qty) - shipOut(db, sh.id, si.order_item_id, '销售出库'), 4);
+    if (need <= 1e-9) continue;
+    const have = lineStock(db, si.order_item_id);
+    if (have + 1e-9 < need) throw new HttpError(409, `货号 ${si.item_no} 本订单在库 ${have}，出货单${sh.ship_no}还需出库 ${need}，请先做“产品入库”`);
+    const inv = fgItem(db, si.sample_id);
+    stock.stockOut(db, db.prepare('SELECT * FROM inventory WHERE id=?').get(inv.id), whId, need,
+      { move_no: sh.ship_no, type: '销售出库', ref_no: sh.ship_no, user_name: ctx.user.name, order_item_id: si.order_item_id, shipment_id: sh.id });
+    n++;
+  }
+  return n;
 }
 
 /**
@@ -275,6 +352,81 @@ function register(r) {
     return { ok: true };
   });
 
+  // ---------- 成品库存 / finished goods ----------
+  r.get('/api/orders/:id/fg', (ctx) => {
+    if (ctx.user.scope === 'designer') throw new HttpError(403, '设计师无权查看成品库存');
+    need(ctx, 'order', 'view');
+    return orderFg(ctx, ctx.params.id);
+  });
+  // 产品入库（按订单）：入库合计不超过订单数量 / finished goods in per order, capped at the order quantity
+  r.post('/api/orders/:id/fg-in', (ctx) => {
+    if (!require('../core').can(ctx.user, 'production', 'edit')) need(ctx, 'purchase', 'edit');
+    const fg = orderFg(ctx, ctx.params.id);
+    const w = warehouse(ctx.db, ctx.body.warehouse_id || stock.defaultWarehouse(ctx.db));
+    const lines = (ctx.body.items || []).filter((x) => num(x.qty) > 0);
+    if (!lines.length) throw new HttpError(400, '请填写入库数量');
+    return tx(ctx.db, () => {
+      const no = nextNo(ctx.db, 'CP', 'stock_moves', 'move_no');
+      for (const l of lines) {
+        const fl = fg.lines.find((x) => x.order_item_id === Number(l.order_item_id));
+        if (!fl) throw new HttpError(400, '订单明细不存在');
+        if (fl.in_qty + num(l.qty) > fl.qty + 1e-9) throw new HttpError(409, `货号 ${fl.item_no} 入库合计不能超过订单数量 ${fl.qty}（已入库 ${fl.in_qty}）`);
+        const oi = ctx.db.prepare('SELECT sample_id FROM order_items WHERE id=?').get(fl.order_item_id);
+        const inv = fgItem(ctx.db, oi.sample_id);
+        stock.stockIn(ctx.db, ctx.db.prepare('SELECT * FROM inventory WHERE id=?').get(inv.id), w.id, num(l.qty), l.unit_cost === '' || l.unit_cost === undefined ? null : l.unit_cost,
+          { move_no: no, type: '产品入库', ref_no: fg.order_no, remark: ctx.body.remark, user_name: ctx.user.name, order_item_id: fl.order_item_id });
+      }
+      log(ctx, 'production', '产品入库', fg.order_no, `${w.name} ${lines.length}项`);
+      return orderFg(ctx, ctx.params.id);
+    });
+  });
+  // 销售出库（按出货单）/ sales issue per shipment
+  r.post('/api/shipments/:id/fg-out', (ctx) => {
+    need(ctx, 'order', 'edit');
+    const sh = ctx.db.prepare('SELECT * FROM shipments WHERE id=?').get(ctx.params.id);
+    if (!sh) throw new HttpError(404, '出货单不存在');
+    require('./orders').getOrder(ctx, sh.order_id);
+    const n = tx(ctx.db, () => issueShipment(ctx, sh, Number(ctx.body.warehouse_id) || null));
+    if (!n) throw new HttpError(409, `出货单${sh.ship_no}已全部出库`);
+    log(ctx, 'order', '销售出库', sh.ship_no, `${n}行`);
+    return orderFg(ctx, sh.order_id);
+  });
+  // 按发票出库：发票下所有出货单一起出库 / issue all shipments of an invoice
+  r.post('/api/ship-invoices/:id/fg-out', (ctx) => {
+    need(ctx, 'order', 'edit');
+    const inv = require('./shipping').getInvoice(ctx, ctx.params.id);
+    const n = tx(ctx.db, () => inv.shipments.reduce((a, s) => a + issueShipment(ctx, ctx.db.prepare('SELECT * FROM shipments WHERE id=?').get(s.id), Number(ctx.body.warehouse_id) || null), 0));
+    if (!n) throw new HttpError(409, `发票${inv.invoice_no}下的出货单已全部出库`);
+    log(ctx, 'order', '按发票销售出库', inv.invoice_no, `${n}行`);
+    return { ok: true, lines: n };
+  });
+  // 销售退货：已出库的货退回仓库，退回后重新计入该订单在库 / sales return back into stock
+  r.post('/api/shipments/:id/fg-return', (ctx) => {
+    need(ctx, 'order', 'edit');
+    const sh = ctx.db.prepare('SELECT * FROM shipments WHERE id=?').get(ctx.params.id);
+    if (!sh) throw new HttpError(404, '出货单不存在');
+    require('./orders').getOrder(ctx, sh.order_id);
+    if (!String(ctx.body.reason || '').trim()) throw new HttpError(400, '请填写退货原因');
+    const w = warehouse(ctx.db, ctx.body.warehouse_id || stock.defaultWarehouse(ctx.db));
+    const lines = (ctx.body.items || []).filter((x) => num(x.qty) > 0);
+    if (!lines.length) throw new HttpError(400, '请填写退货数量');
+    return tx(ctx.db, () => {
+      for (const l of lines) {
+        const oiId = Number(l.order_item_id);
+        const si = ctx.db.prepare('SELECT si.*, oi.sample_id, oi.item_no FROM shipment_items si JOIN order_items oi ON oi.id=si.order_item_id WHERE si.shipment_id=? AND si.order_item_id=?').get(sh.id, oiId);
+        if (!si) throw new HttpError(400, '退货货号不在该出货单中');
+        const out = shipOut(ctx.db, sh.id, oiId, '销售出库');
+        const back = round(ctx.db.prepare("SELECT COALESCE(SUM(qty),0) v FROM stock_moves WHERE shipment_id=? AND order_item_id=? AND type='销售退货'").get(sh.id, oiId).v, 4);
+        if (back + num(l.qty) > out + 1e-9) throw new HttpError(409, `货号 ${si.item_no} 退货数量超过已出库数量（已出库 ${out}，已退 ${back}）`);
+        const inv = fgItem(ctx.db, si.sample_id);
+        stock.stockIn(ctx.db, ctx.db.prepare('SELECT * FROM inventory WHERE id=?').get(inv.id), w.id, num(l.qty), null,
+          { move_no: sh.ship_no, type: '销售退货', ref_no: sh.ship_no, remark: ctx.body.reason, user_name: ctx.user.name, order_item_id: oiId, shipment_id: sh.id });
+      }
+      log(ctx, 'order', '销售退货', sh.ship_no, `${lines.length}行：${ctx.body.reason}`);
+      return orderFg(ctx, sh.order_id);
+    });
+  });
+
   // ---------- 验货单 / inspections ----------
   r.get('/api/inspections', (ctx) => {
     need(ctx, 'order', 'view');
@@ -288,4 +440,4 @@ function register(r) {
   r.put('/api/inspections/:id', (ctx) => { need(ctx, 'order', 'edit'); return saveInspection(ctx, ctx.params.id); });
 }
 
-module.exports = { register, RESULTS, INSP_TYPES };
+module.exports = { register, RESULTS, INSP_TYPES, orderFg, fgItem };

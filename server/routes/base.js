@@ -6,7 +6,7 @@
  */
 const crypto = require('node:crypto');
 const { HttpError } = require('../http');
-const { can, need, log, tx, required, today, num } = require('../core');
+const { can, need, log, tx, required, today, num, syncDefaultPackage } = require('../core');
 const { ENTITIES, REF_LABEL, CHILDREN } = require('../entities');
 const { hashPassword, ACTIONS } = require('../db');
 const { tableXlsx } = require('../xlsx');
@@ -294,12 +294,7 @@ function beforeSave(ctx, key, data, old) {
     if (!(num(m.cbm) > 0) && m.outer_l && m.outer_w && m.outer_h) data.cbm = Math.round(num(m.outer_l) * num(m.outer_w) * num(m.outer_h) / 1e6 * 10000) / 10000;
     if (m.is_default === '是') {
       // 默认方案同步到样品档案的包装资料 / sync the default plan to the sample's packing fields
-      const sid = m.sample_id;
-      db.prepare("UPDATE sample_packages SET is_default='否' WHERE sample_id=? AND id<>?").run(sid, old ? old.id : -1);
-      const cbm = data.cbm !== undefined ? data.cbm : m.cbm;
-      db.prepare(`UPDATE samples SET pack_inner=?, pack_middle=?, pcs_per_carton=?, outer_l=?, outer_w=?, outer_h=?, cbm=?, gross_weight=?, net_weight=?,
-        package_req=COALESCE(?, package_req) WHERE id=?`).run(m.inner_qty ?? null, m.middle_qty ?? null, m.outer_qty, m.outer_l ?? null, m.outer_w ?? null, m.outer_h ?? null,
-        cbm ?? null, m.gw ?? null, m.nw ?? null, m.package_req || m.name || null, sid);
+      syncDefaultPackage(db, { ...m, cbm: data.cbm !== undefined ? data.cbm : m.cbm }, old ? old.id : null);
     }
   }
   if (key === 'sample_part' && num({ ...(old || {}), ...data }.qty) <= 0) throw new HttpError(400, '用量必须大于0');
@@ -710,13 +705,13 @@ function register(r) {
     const b = ctx.body;
     const cur = (k) => (b[k] !== undefined ? String(b[k]) : (ctx.db.prepare('SELECT value FROM settings WHERE key=?').get(k) || {}).value);
     const allowed = new Set(['company_name', 'company_name_en', 'quote_min_profit', 'rate_api_url', 'rate_auto_hours', 'rate_max_change', 'mail_fetch_minutes', 'mail_initial_sync',
-      'show_demo_accounts', 'mail_allow_private_hosts', 'lockout_threshold', 'lockout_minutes']);
+      'show_demo_accounts', 'mail_allow_private_hosts', 'lockout_threshold', 'lockout_minutes', 'ar_writeoff_max', 'fg_require_out_before_ship']);
     for (const k of Object.keys(b)) if (!allowed.has(k)) throw new HttpError(400, `未知参数：${k}`);
-    for (const k of ['quote_min_profit', 'rate_auto_hours', 'rate_max_change', 'mail_fetch_minutes', 'mail_initial_sync', 'lockout_threshold', 'lockout_minutes']) {
+    for (const k of ['quote_min_profit', 'rate_auto_hours', 'rate_max_change', 'mail_fetch_minutes', 'mail_initial_sync', 'lockout_threshold', 'lockout_minutes', 'ar_writeoff_max']) {
       if (b[k] !== undefined && !(Number(b[k]) >= 0 && Number(b[k]) <= 100000)) throw new HttpError(400, `参数 ${k} 必须是非负数字`);
     }
     if (b.lockout_threshold !== undefined && Number(b.lockout_threshold) < 3) throw new HttpError(400, '锁定阈值不能小于3次');
-    for (const k of ['show_demo_accounts', 'mail_allow_private_hosts']) if (b[k] !== undefined && !['0', '1'].includes(String(b[k]))) throw new HttpError(400, `参数 ${k} 只能是 0 或 1`);
+    for (const k of ['show_demo_accounts', 'mail_allow_private_hosts', 'fg_require_out_before_ship']) if (b[k] !== undefined && !['0', '1'].includes(String(b[k]))) throw new HttpError(400, `参数 ${k} 只能是 0 或 1`);
     if (b.rate_api_url !== undefined) {
       let url;
       try { url = new URL(String(b.rate_api_url)); } catch { throw new HttpError(400, '汇率接口地址格式错误'); }

@@ -156,6 +156,13 @@
           ERP.navigate();
         });
       }
+      if (v.status !== '已作废') {
+        btn('按发票出库', '', async () => {
+          if (!(await confirmBox('把本发票下所有出货单的成品做销售出库？（按各订单在库数量扣减）'))) return;
+          const r = await post(`/api/ship-invoices/${id}/fg-out`, {});
+          toast(`已出库 ${r.lines} 行`, 'ok');
+        });
+      }
       if (v.status === '草稿') btn('作废', 'danger', async () => { if (await confirmBox('作废该发票？出货单会保留，回到“未开票”状态。')) { await post(`/api/ship-invoices/${id}/status`, { status: '已作废' }); ERP.navigate(); } });
     }
     const company = ERP.state.meta.company;

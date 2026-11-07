@@ -5,7 +5,7 @@
  * @module server/migrate
  */
 const { HttpError } = require('./http');
-const { num, log } = require('./core');
+const { num, round, log, syncDefaultPackage } = require('./core');
 const { CHILDREN, RATING, USE_STATUS, CUSTOMER_SOURCES, PURCHASE_TYPES, COOP_STATUS } = require('./entities');
 
 /**
@@ -133,6 +133,58 @@ const PROFILES = {
       c('label_req', '标签要求', ['标签规范']),
       c('use_status', '停用', ['使用状态', '是否停用'], { type: 'status' }),
       c('remark', '产品备注', ['备注']),
+    ],
+  },
+  sample_part: {
+    title: '样品配件/包材明细', table: 'sample_parts', key: 'name', match: ['sample_id', 'kind', 'name'], module: 'sample', order: 4,
+    defaults: { kind: '配件', per: '每只', qty: 1 },
+    hint: '对应亿星样品档案的“配件明细Excel导入”“包材明细Excel导入”。同一货号下按“类别+名称”识别同一条明细；请先导入样品档案。',
+    columns: [
+      c('sample_id', '货号', ['公司货号', '产品编号', '主货号'], { type: 'ref', ref: 'sample', required: true }),
+      c('kind', '类别', ['明细类别', '类型', '配件/包材'], { type: 'select', options: ['配件', '包材'], fallback: '配件' }),
+      c('code', '材料编号', ['物料编码', '材料编码', '配件编号', '包材编号']),
+      c('name', '材料名称', ['名称', '配件名称', '包材名称', '物料名称'], { required: true }),
+      c('spec', '规格', ['规格型号']),
+      c('qty', '数量', ['用量', '单件用量'], { type: 'number' }),
+      c('per', '用量按', ['计量方式'], { type: 'select', options: ['每只', '每箱'], fallback: '每只' }),
+      c('unit', '单位', ['计量单位']),
+      c('unit_price', '单价', ['单价¥', '价格', '采购价'], { type: 'number' }),
+      c('supplier_id', '厂家', ['供应商', '厂家简称'], { type: 'ref', ref: 'supplier', soft: true }),
+      c('remark', '备注', ['说明']),
+    ],
+  },
+  sample_process: {
+    title: '样品工序明细', table: 'sample_processes', key: 'name', match: ['sample_id', 'name'], module: 'sample', order: 5,
+    hint: '对应亿星样品档案的“工序明细Excel导入”。同一货号下按工序名称识别同一条明细。',
+    columns: [
+      c('sample_id', '货号', ['公司货号', '产品编号'], { type: 'ref', ref: 'sample', required: true }),
+      c('seq', '顺序', ['序号', '工序顺序'], { type: 'int' }),
+      c('name', '工序名称', ['工序', '加工工序'], { required: true }),
+      c('price', '工价', ['单价', '加工单价', '工价¥'], { type: 'number' }),
+      c('supplier_id', '加工厂', ['厂家', '外发厂', '外发加工厂'], { type: 'ref', ref: 'supplier', soft: true }),
+      c('remark', '备注', ['说明']),
+    ],
+  },
+  sample_package: {
+    title: '样品包装方案', table: 'sample_packages', key: 'name', match: ['sample_id', 'name'], module: 'sample', order: 6,
+    defaults: { is_default: '否' },
+    hint: '对应亿星样品“多包装方案”。“默认”列为“是”的方案会同步到样品档案的装箱数、箱规、CBM、毛净重。',
+    columns: [
+      c('sample_id', '货号', ['公司货号', '产品编号'], { type: 'ref', ref: 'sample', required: true }),
+      c('name', '包装方案', ['方案名称', '包装方式', '包装名称'], { required: true }),
+      c('inner_qty', '内', ['包装率-内', '内盒装数'], { type: 'int' }),
+      c('middle_qty', '中', ['包装率-中', '中盒装数'], { type: 'int' }),
+      c('outer_qty', '外', ['包装率-外', '装箱数', '外箱装数'], { type: 'int', required: true }),
+      c('outer_l', '外箱长CM', ['外箱长'], { type: 'number' }),
+      c('outer_w', '外箱宽CM', ['外箱宽'], { type: 'number' }),
+      c('outer_h', '外箱高CM', ['外箱高'], { type: 'number' }),
+      c('carton_size', '外箱规格', ['外箱规格CM', '外箱尺寸'], { type: 'size', into: ['outer_l', 'outer_w', 'outer_h'] }),
+      c('cbm', 'CBM', ['体积'], { type: 'number' }),
+      c('gw', '毛重', ['毛重KG'], { type: 'number' }),
+      c('nw', '净重', ['净重KG'], { type: 'number' }),
+      c('package_req', '包装说明', ['包装要求']),
+      c('is_default', '默认', ['默认方案', '是否默认'], { type: 'yesno' }),
+      c('remark', '备注', ['说明']),
     ],
   },
 };
@@ -264,7 +316,9 @@ function buildLookups(db) {
   for (const s of db.prepare('SELECT id, code, name, full_name FROM suppliers').all()) {
     for (const k of [s.code, s.name, s.full_name]) if (k && !supplier.has(norm(k))) supplier.set(norm(k), s.id);
   }
-  return { employee, supplier };
+  const sample = new Map();
+  for (const s of db.prepare('SELECT id, company_no FROM samples').all()) sample.set(norm(s.company_no), s.id);
+  return { employee, supplier, sample };
 }
 
 /**
@@ -298,6 +352,8 @@ function convertRow(profile, row, mapping, lookups) {
       else col.into.forEach((f, k) => { if (data[f] === undefined) data[f] = s[k]; });
     } else if (col.type === 'status') {
       data[field] = parseStatus(raw);
+    } else if (col.type === 'yesno') {
+      data[field] = /^(是|y|yes|true|1|√|✓|默认)$/i.test(raw) ? '是' : '否';
     } else if (col.type === 'select') {
       if (col.options.includes(raw)) data[field] = raw;
       else {
@@ -357,16 +413,21 @@ function runImport(ctx, opt) {
       const excelRow = r + 1;
       const { data, errors, missing, warnings: w, soft, notes } = convertRow(profile, row, mapping, lookups);
       const key = data[profile.key];
-      const tagOf = (msg) => ({ row: excelRow, key: key || '', msg });
+      // 复合键（如 货号+类别+名称）：先补默认值再比对 / composite keys: apply defaults before matching
+      if (profile.defaults) for (const [k, v] of Object.entries(profile.defaults)) if (data[k] === undefined || data[k] === '') data[k] = v;
+      const keyText = profile.match ? `${row[mapping.indexOf('sample_id')] || ''} ${key || ''}`.trim() : key;
+      const tagOf = (msg) => ({ row: excelRow, key: keyText || '', msg });
       w.forEach((m) => warnings.push(tagOf(m)));
       if (!key) { result.invalid.push(tagOf(`缺少【${keyCol.label}】`)); continue; }
-      const dupKey = norm(key);
-      if (seen.has(dupKey)) { result.duplicate.push(tagOf(`【${keyCol.label}】${key} 在表格中重复出现，只导入第一行`)); continue; }
+      const dupKey = profile.match ? profile.match.map((f) => norm(f === 'sample_id' ? row[mapping.indexOf('sample_id')] : data[f])).join('|') : norm(key);
+      if (seen.has(dupKey)) { result.duplicate.push(tagOf(`${profile.match ? '同一货号下' : `【${keyCol.label}】`}${key} 在表格中重复出现，只导入第一行`)); continue; }
       seen.add(dupKey);
       if (errors.length) { result.invalid.push(tagOf(errors.join('；'))); continue; }
       if (missing.length) { result.ref_missing.push(tagOf(`${missing.join('、')}在系统中不存在`)); continue; }
 
-      const old = db.prepare(`SELECT * FROM ${profile.table} WHERE ${profile.key}=?`).get(key);
+      const old = profile.match
+        ? db.prepare(`SELECT * FROM ${profile.table} WHERE ${profile.match.map((f) => `${f}=?`).join(' AND ')}`).get(...profile.match.map((f) => data[f]))
+        : db.prepare(`SELECT * FROM ${profile.table} WHERE ${profile.key}=?`).get(key);
       if (notes.length) {
         const base = String(data.remark ?? (old ? old.remark : '') ?? '');
         const note = `【亿星原值】${notes.join('；')}`;
@@ -394,9 +455,11 @@ function runImport(ctx, opt) {
         }
         const lack = requiredCols.filter((col) => data[col.field] === undefined || data[col.field] === null || data[col.field] === '');
         if (lack.length) { result.invalid.push(tagOf(`缺少必填项：${lack.map((col) => col.label).join('、')}`)); continue; }
+        if (opt.entity === 'sample_package' && !(num(data.cbm) > 0) && data.outer_l && data.outer_w && data.outer_h) data.cbm = round(data.outer_l * data.outer_w * data.outer_h / 1e6, 4);
         const cols = Object.keys(data);
         const ins = db.prepare(`INSERT INTO ${profile.table}(${cols.join(',')}) VALUES(${cols.map(() => '?').join(',')})`).run(...cols.map((k) => data[k]));
         const id = Number(ins.lastInsertRowid);
+        if (opt.entity === 'sample_package' && data.is_default === '是') syncDefaultPackage(db, { ...data }, id);
         batchRows.push([id, '新增', null]);
         result.created.push(tagOf('新增'));
         if (Object.keys(soft).length) pendingSoft.push({ id, soft, tag: tagOf });
@@ -408,6 +471,7 @@ function runImport(ctx, opt) {
         if (cols.length) {
           const before = Object.fromEntries(cols.map((k) => [k, old[k]]));
           db.prepare(`UPDATE ${profile.table} SET ${cols.map((k) => `${k}=?`).join(',')} WHERE id=?`).run(...cols.map((k) => data[k]), old.id);
+          if (opt.entity === 'sample_package' && { ...old, ...data }.is_default === '是') syncDefaultPackage(db, { ...old, ...data }, old.id);
           batchRows.push([old.id, '覆盖', JSON.stringify(before)]);
         }
         result.updated.push(tagOf(cols.length ? `已覆盖 ${cols.length} 个字段` : '内容相同，无需修改'));

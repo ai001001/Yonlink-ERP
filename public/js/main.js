@@ -31,7 +31,7 @@
     ['工作台', 'home', [['工作台首页', '#/', null], ['审批中心', '#/approvals', '*audit'], ['变更联动任务', '#/change-tasks', '*task']]],
     ['客户管理', 'customer', [['客户档案', '#/e/customer', 'customer'], ['客户跟进/询盘', '#/e/customer_follow', 'customer'], ['业务邮件', '#/mails', 'mail'], ['邮箱账户', '#/mail-accounts', 'mail']]],
     ['样品管理', 'sample', [['样品档案', '#/e/sample', 'sample'], ['改样日志', '#/e/sample_revision', 'sample'], ['送样单', '#/sends', 'sendsample']]],
-    ['报价管理', 'quote', [['报价单', '#/quotes', 'quote'], ['工厂询价台账', '#/inquiries', 'quote:noDesigner']]],
+    ['报价管理', 'quote', [['报价单', '#/quotes', 'quote'], ['工厂询价台账', '#/inquiries', 'quote:noDesigner'], ['配件/工序询价', '#/bom-inquiries', 'quote:noDesigner']]],
     ['订单出货', 'order', [['销售订单', '#/orders', 'order'], ['出货中心（发票）', '#/invoices', 'order:noDesigner'], ['出货台账', '#/shipments', 'order'], ['验货管理', '#/inspections', 'order:noDesigner']]],
     ['采购管理', 'purchase', [['采购单', '#/purchases', 'purchase'], ['供应商', '#/e/supplier', 'supplier'], ['历史供货价格', '#/e/supplier_price', 'supplier'], ['物料库存', '#/e/inventory', 'purchase'], ['库存查询（分仓）', '#/stock', 'purchase'], ['出入库明细', '#/stock-moves', 'purchase'], ['库存盘点', '#/stocktakes', 'purchase'], ['仓库', '#/e/warehouse', 'purchase']]],
     ['生产管理', 'production', [['布产进度', '#/production', 'production']]],
@@ -42,7 +42,7 @@
   ];
 
   /** 详情页归属的菜单 / Menu entry that owns a detail page */
-  const PARENT = [['/quote/', '#/quotes'], ['/inquiry/', '#/inquiries'], ['/send/', '#/sends'], ['/order/', '#/orders'], ['/purchase/', '#/purchases'],
+  const PARENT = [['/quote/', '#/quotes'], ['/inquiry/', '#/inquiries'], ['/bom-inquiry/', '#/bom-inquiries'], ['/send/', '#/sends'], ['/order/', '#/orders'], ['/purchase/', '#/purchases'],
     ['/receivable/', '#/receivables'], ['/invoice/', '#/invoices'], ['/slip/', '#/slips'], ['/stocktake/', '#/stocktakes'], ['/inspection/', '#/inspections'], ['/production/', '#/production'], ['/customer/', '#/e/customer'], ['/sample/', '#/e/sample'], ['/reports/', '#/reports/business']];
 
   /** 折叠状态（记住在本机）/ Collapsed groups, remembered per browser */

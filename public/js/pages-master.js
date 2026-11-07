@@ -227,9 +227,12 @@
     const canEdit = can('sample', 'edit');
     const show = (f, r) => (f.type === 'ref' ? esc(r[f.name.replace('_id', '_name')] ?? r[f.name + '_label'] ?? '') : f.type === 'textarea' ? `<span class="pre">${esc(r[f.name])}</span>` : esc(r[f.name]));
     const extra = key === 'sample_part' ? ['每只成本¥'] : [];
+    // 配件/包材/工序可勾选后向供应商询价 / parts, packaging and processes can be sent for inquiry
+    const canInq = key !== 'sample_package' && can('quote', 'edit') && ERP.state.meta.user.scope !== 'designer' && rows.length > 0;
+    const pick = (r) => (canInq ? [`<input type="checkbox" data-inq="${r.id}" aria-label="选择询价">`] : []);
     box.innerHTML = `<div class="panel-head"><div class="tabs">${SAMPLE_TABS.map(([k, l]) => `<button class="tab ${k === cur[0] ? 'active' : ''}" type="button" data-stab="${k}">${l} <span class="muted small">${counts[k]}</span></button>`).join('')}</div>
-      ${canEdit ? `<button class="btn small primary" type="button" data-sadd>＋ 新增${esc(label.replace('明细', ''))}</button>` : ''}</div>
-      ${tableHtml([...fields.map((f) => f.label), ...extra, ...(canEdit ? ['操作'] : [])], rows.map((r) => [...fields.map((f) => show(f, r)), ...(key === 'sample_part' ? [money(r.cost_per_pc)] : []),
+      <div class="toolbar">${canInq ? '<button class="btn small" type="button" data-sinq>询价所选</button>' : ''}${canEdit ? `<button class="btn small primary" type="button" data-sadd>＋ 新增${esc(label.replace('明细', ''))}</button>` : ''}</div></div>
+      ${tableHtml([...(canInq ? ['询价'] : []), ...fields.map((f) => f.label), ...extra, ...(canEdit ? ['操作'] : [])], rows.map((r) => [...pick(r), ...fields.map((f) => show(f, r)), ...(key === 'sample_part' ? [money(r.cost_per_pc)] : []),
     ...(canEdit ? [`<button class="btn small" type="button" data-sedit="${r.id}">编辑</button> <button class="btn small danger" type="button" data-sdel="${r.id}">删除</button>`] : [])]))}
       <div class="kv" style="margin-top:10px"><div><b>配件成本/只</b><span>¥${money(bom.cost.parts)}</span></div><div><b>包材成本/只</b><span>¥${money(bom.cost.packaging)}</span></div>
         <div><b>工序工价/只</b><span>¥${money(bom.cost.process)}</span></div><div><b>明细合计/只</b><span><b>¥${money(bom.cost.total)}</b></span></div>
@@ -252,6 +255,30 @@
     });
     const ab = box.querySelector('[data-sadd]');
     if (ab) ab.onclick = () => form(null);
+    const ib = box.querySelector('[data-sinq]');
+    if (ib) {
+      ib.onclick = async () => {
+        const ids = [...box.querySelectorAll('[data-inq]:checked')].map((c) => Number(c.dataset.inq));
+        if (!ids.length) { toast('请先勾选要询价的明细', 'error'); return; }
+        const sups = await ERP.options('supplier');
+        modal({
+          title: `向供应商询价（${ids.length}项）`,
+          body: `<div class="form-grid"><label><span class="req">供应商</span><select name="supplier_id">${ERP.optHtml(sups, '')}</select></label>
+            <label><span>询价数量（可空）</span><input type="number" min="0" name="qty"></label><label><span>报价有效期</span><input type="date" name="valid_until"></label>
+            <label class="wide"><span>备注/要求</span><input name="remark"></label></div>`,
+          buttons: [{
+            text: '生成询价单', cls: 'primary', onClick: async (m) => {
+              const f = readForm(m.el);
+              const r = await post('/api/bom-inquiries', { supplier_id: f.supplier_id, valid_until: f.valid_until, remark: f.remark,
+                lines: ids.map((sid) => ({ source_type: key === 'sample_part' ? 'part' : 'process', source_id: sid, qty: f.qty })) });
+              m.close();
+              toast(`询价单 ${r.inq_no} 已生成`, 'ok');
+              location.hash = '#/bom-inquiry/' + r.id;
+            },
+          }],
+        });
+      };
+    }
     box.querySelectorAll('[data-sedit]').forEach((b) => { b.onclick = async () => form(await get(`/api/e/${key}/${b.dataset.sedit}`)); });
     box.querySelectorAll('[data-sdel]').forEach((b) => {
       b.onclick = async () => {
@@ -462,6 +489,8 @@
         <label><span>登录页显示演示账号（正式使用请关闭）</span><select name="show_demo_accounts">${ERP.optHtml([{ id: '1', label: '显示' }, { id: '0', label: '不显示' }], s.show_demo_accounts, false)}</select></label>
         <label><span>连续输错几次密码锁定账号</span><input name="lockout_threshold" type="number" min="3" value="${esc(s.lockout_threshold)}"></label>
         <label><span>锁定时长（分钟）</span><input name="lockout_minutes" type="number" min="1" value="${esc(s.lockout_minutes)}"></label>
+        <label><span>应收单笔销账上限（原币金额）</span><input name="ar_writeoff_max" type="number" step="any" value="${esc(s.ar_writeoff_max)}"></label>
+        <label><span>出运前必须先做成品销售出库</span><select name="fg_require_out_before_ship">${ERP.optHtml([{ id: '0', label: '不要求（默认）' }, { id: '1', label: '要求' }], s.fg_require_out_before_ship, false)}</select></label>
         <label><span>允许内网/本机邮件服务器（有SSRF风险，仅内网部署时开启）</span><select name="mail_allow_private_hosts">${ERP.optHtml([{ id: '0', label: '不允许（推荐）' }, { id: '1', label: '允许' }], s.mail_allow_private_hosts, false)}</select></label></div>
         ${editable ? '<div style="margin-top:12px"><button class="btn primary" id="saveSet">保存参数</button></div>' : ''}`;
       const sb = body.querySelector('#saveSet');

@@ -251,7 +251,7 @@ const ENTITIES = {
     module: 'purchase', table: 'inventory', title: '物料库存', search: ['code', 'name', 'category'],
     fields: [
       f('code', '物料编码', { required: true }), f('name', '物料名称', { required: true }),
-      f('category', '类别', { type: 'select', options: ['陶土', '釉料', '色料', '包装耗材', '配件', '外购成品', '其它'] }),
+      f('category', '类别', { type: 'select', options: ['陶土', '釉料', '色料', '包装耗材', '配件', '成品', '外购成品', '其它'] }),
       f('unit', '单位'), f('qty', '库存数量（直接修改记为库存调整）', { type: 'number' }), f('unit_cost', '单位成本¥', { type: 'number' }),
       f('warehouse_id', '默认仓库', { type: 'ref', ref: 'warehouse' }),
       f('safety_qty', '安全库存(缺料预警)', { type: 'number' }), f('max_qty', '最高库存(积压预警)', { type: 'number' }), f('remark', '备注', { type: 'textarea', list: false }),

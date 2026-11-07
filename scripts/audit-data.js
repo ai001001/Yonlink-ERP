@@ -24,6 +24,12 @@ function audit(db) {
     check('物料库存 = 库存流水合计', all(`SELECT i.code, i.qty, (SELECT COALESCE(SUM(qty),0) FROM stock_moves WHERE inventory_id=i.id) moves FROM inventory i
       WHERE ABS(i.qty - (SELECT COALESCE(SUM(qty),0) FROM stock_moves WHERE inventory_id=i.id)) > 0.001`));
     check('各仓库库存不为负', all(`SELECT inventory_id, warehouse_id, SUM(qty) q FROM stock_moves GROUP BY inventory_id, warehouse_id HAVING q < -0.0001`));
+    const cols = db.prepare('PRAGMA table_info(stock_moves)').all().map((c) => c.name);
+    if (cols.includes('order_item_id')) {
+      check('订单成品在库不为负、出库不超过出货数', all(`SELECT order_item_id, SUM(qty) q FROM stock_moves WHERE order_item_id IS NOT NULL GROUP BY order_item_id HAVING q < -0.0001
+        UNION ALL SELECT m.order_item_id, -SUM(m.qty) - si.qty FROM stock_moves m JOIN shipment_items si ON si.shipment_id=m.shipment_id AND si.order_item_id=m.order_item_id
+        WHERE m.type IN ('销售出库','销售退货') GROUP BY m.shipment_id, m.order_item_id HAVING -SUM(m.qty) > si.qty + 0.0001`));
+    }
   }
   check('出货数量不超过订单数量', all(`SELECT oi.id, oi.item_no, oi.qty, SUM(si.qty) shipped FROM order_items oi JOIN shipment_items si ON si.order_item_id=oi.id
     JOIN shipments s ON s.id=si.shipment_id AND s.status<>'已取消' GROUP BY oi.id HAVING shipped > oi.qty`));

@@ -521,4 +521,64 @@
       });
     });
   });
+
+  // ===================== 配件/包材/工序询价 / BOM inquiries =====================
+  route(/^\/bom-inquiries$/, async (_, main) => {
+    setTitle('配件/工序询价');
+    const { rows } = await get('/api/bom-inquiries');
+    await ERP.grid(main, {
+      key: 'doc.bominq', title: '配件/包材/工序询价', mode: 'client', rows, module: 'quote',
+      headHtml: '<div class="alert info"><span>在样品档案的“配件明细/包材明细/工序明细”页签勾选明细后点“询价”生成询价单；供应商回价后在此比价，“采用”会把单价/工价和供应商写回样品明细并记入历史供货价格。</span></div>',
+      columns: [
+        { key: 'inq_no', label: '询价单', html: (v) => `<a href="#/bom-inquiry/${v.id}">${esc(v.inq_no)}</a>` }, { key: 'supplier_name', label: '供应商' }, { key: 'status', label: '状态', html: (v) => tag(v.status) },
+        { key: 'kinds', label: '类别' }, { key: 'item_nos', label: '货号' }, { key: 'item_count', label: '明细数', num: true }, { key: 'replied', label: '已回价', num: true }, { key: 'adopted', label: '已采用', num: true },
+        { key: 'sent_at', label: '发送时间' }, { key: 'reply_date', label: '回价日期' }, { key: 'valid_until', label: '有效期' }, { key: 'user_name', label: '制单人' }, { key: 'created_at', label: '创建时间' },
+      ],
+      tree: [{ key: 'status', label: '状态' }, { key: 'supplier_name', label: '供应商' }, { key: 'kinds', label: '类别' }, { key: 'month', label: '月份', text: (v) => String(v.created_at || '').slice(0, 7) }],
+      schemes: [['status'], ['supplier_name'], ['kinds', 'status'], ['month']],
+      quick: [{ key: 'inq_no', label: '询价单' }, { key: 'supplier_name', label: '供应商' }, { key: 'item_nos', label: '货号' }],
+    });
+  });
+
+  route(/^\/bom-inquiry\/(\d+)$/, async ([id], main) => {
+    const q = await get('/api/bom-inquiries/' + id);
+    setTitle('配件/工序询价 ' + q.inq_no);
+    const edit = can('quote', 'edit');
+    const cmp = (it) => (it.others.length ? it.others.map((o) => `${esc(o.supplier_name)} ${money(o.price)}${o.lead_days !== null ? `/${o.lead_days}天` : ''}`).join('<br>') : '<span class="muted">无</span>');
+    const rows = q.items.map((it) => [
+      edit && !it.adopted ? `<input type="checkbox" data-pick="${it.id}" ${it.price === null ? 'disabled' : ''}>` : it.adopted ? tag('已采用') : '',
+      `<a href="#/sample/${it.sample_id}">${esc(it.item_no)}</a>`, esc(it.kind), esc(it.name), esc(it.spec), esc(it.unit), it.qty ?? '', money(it.old_price),
+      edit && !it.adopted ? `<input type="number" step="any" min="0" style="width:90px" data-price="${it.id}" value="${esc(it.price ?? '')}">` : money(it.price),
+      edit && !it.adopted ? `<input type="number" min="0" style="width:70px" data-lead="${it.id}" value="${esc(it.lead_days ?? '')}">` : esc(it.lead_days ?? ''),
+      edit && !it.adopted ? `<input style="width:140px" data-rmk="${it.id}" value="${esc(it.remark ?? '')}">` : esc(it.remark),
+      it.price === null ? '' : it.lowest ? tag('最低') : '<span class="muted small">非最低</span>', cmp(it),
+    ]);
+    main.innerHTML = `<div class="panel"><div class="panel-head"><h2>${esc(q.inq_no)} ${tag(q.status)}</h2>
+        <div class="toolbar">${edit && q.status === '待发送' ? '<button class="btn" type="button" id="bSent">标记已发送</button>' : ''}
+        ${edit ? '<button class="btn primary" type="button" id="bReply">保存回价</button><button class="btn" type="button" id="bAdopt">采用所选报价</button>' : ''}
+        <button class="btn" type="button" id="bPrint">打印询价单</button><button class="btn" type="button" id="bExp">导出Excel</button>
+        ${edit && !q.items.some((i) => i.adopted) ? '<button class="btn danger" type="button" id="bDel">删除</button>' : ''}<a class="btn" href="#/bom-inquiries">返回</a></div></div>
+      <div class="kv"><div><b>供应商</b><span>${esc(q.supplier_name)}</span></div><div><b>联系人</b><span>${esc(q.supplier_contact)} ${esc(q.supplier_phone)}</span></div>
+        <div><b>发送时间</b><span>${esc(q.sent_at || '-')}</span></div><div><b>回价日期</b><span>${esc(q.reply_date || '-')}</span></div><div><b>有效期</b><span>${esc(q.valid_until)}</span></div>
+        <div><b>制单人</b><span>${esc(q.user_name)}</span></div><div class="wide"><b>备注</b><span>${esc(q.remark || '')}</span></div></div>
+      <div style="margin-top:10px">${tableHtml(['采用', '货号', '类别', '名称', '规格', '单位', '询价数量', '原单价¥', '报价¥', '交期(天)', '回价备注', '比价', '其他供应商报价'], rows)}</div>
+      <p class="muted small">先填报价并“保存回价”，再勾选要采用的行点“采用所选报价”。同一明细只保留最后一次采用的报价。</p></div>`;
+    const act = async (fn, msg) => { try { await fn(); toast(msg, 'ok'); ERP.navigate(); } catch (e) { toast(e.message, 'error'); } };
+    const on = (sel, fn) => { const b = main.querySelector(sel); if (b) b.onclick = fn; };
+    on('#bSent', () => act(() => post(`/api/bom-inquiries/${id}/sent`), '已标记发送'));
+    on('#bReply', () => act(() => put(`/api/bom-inquiries/${id}/reply`, {
+      items: q.items.filter((it) => !it.adopted).map((it) => ({ id: it.id, price: main.querySelector(`[data-price="${it.id}"]`).value, lead_days: main.querySelector(`[data-lead="${it.id}"]`).value, remark: main.querySelector(`[data-rmk="${it.id}"]`).value })),
+    }), '回价已保存'));
+    on('#bAdopt', async () => {
+      const ids = [...main.querySelectorAll('[data-pick]:checked')].map((c) => Number(c.dataset.pick));
+      if (!ids.length) { toast('请先勾选已回价的明细', 'error'); return; }
+      if (!(await confirmBox(`采用所选 ${ids.length} 项报价？单价/工价和供应商会写回样品明细，并记入历史供货价格与改样日志。`))) return;
+      act(() => post(`/api/bom-inquiries/${id}/adopt`, { item_ids: ids }), '已采用，样品明细已更新');
+    });
+    on('#bDel', async () => { if (await confirmBox('删除这张询价单？')) act(async () => { await del('/api/bom-inquiries/' + id); location.hash = '#/bom-inquiries'; }, '已删除'); });
+    const heads = ['货号', '类别', '名称', '规格', '单位', '询价数量', '报价', '交期(天)', '备注'];
+    const data = q.items.map((it) => [it.item_no, it.kind, it.name, it.spec, it.unit, it.qty ?? '', it.price ?? '', it.lead_days ?? '', it.remark || '']);
+    on('#bExp', () => exportTable('quote', `询价单${q.inq_no}`, heads, data));
+    on('#bPrint', () => printHtml(`<h2>询价单 ${esc(q.inq_no)}</h2><p>致：${esc(q.supplier_name)} ${esc(q.supplier_contact || '')}　有效期：${esc(q.valid_until)}</p>${tableHtml(heads, data.map((r) => r.map(esc)))}<p>${esc(q.remark || '')}</p>`));
+  });
 })();

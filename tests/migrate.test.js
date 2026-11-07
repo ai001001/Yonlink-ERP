@@ -244,5 +244,5 @@ test('TC-MIG-11 权限与模板：非管理员不能导入；模板列名采用�
   const header = readTable(t.data)[0];
   assert.ok(header.includes('货号*') && header.includes('中文品名*') && header.includes('厂号') && header.includes('外箱规格'));
   const prof = await admin.get('/api/migrate/profiles');
-  assert.deepEqual(prof.data.map((p) => p.key), ['supplier', 'customer', 'sample']);
+  assert.deepEqual(prof.data.map((p) => p.key), ['supplier', 'customer', 'sample', 'sample_part', 'sample_process', 'sample_package']);
 });

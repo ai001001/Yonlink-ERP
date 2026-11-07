@@ -79,6 +79,59 @@
   }
 
   /**
+   * 订单成品库存面板：产品入库、按出货单销售出库、销售退货 / Finished goods of an order: in, issue per shipment, returns.
+   * @param {HTMLElement} box
+   * @param {object} o 订单 / order
+   */
+  async function loadFg(box, o) {
+    const fg = await get(`/api/orders/${o.id}/fg`);
+    const canIn = can('production', 'edit') || can('purchase', 'edit');
+    const canOut = can('order', 'edit');
+    box.innerHTML = `<div class="panel-head"><h3>成品库存（按订单）</h3>${canIn && !['已完成'].includes(o.status) ? '<button class="btn small primary" type="button" id="fgIn">产品入库</button>' : ''}</div>
+      <p class="muted small">生产完工或外购成品到货后做“产品入库”，出货时按出货单“出库”。${fg.require_out ? '<b>系统参数要求出运前必须完成出库。</b>' : '是否出库不影响出运（可在系统参数中改为必须先出库）。'}</p>
+      ${tableHtml(['货号', '订单数', '包装完工', '已入库', '已出库', '退货', '本订单在库', '已排出货', '已出运'], fg.lines.map((l) => [esc(l.item_no), l.qty, l.produced_qty, l.in_qty, l.out_qty, l.return_qty,
+    `<b>${l.stock}</b>`, l.shipped_qty, l.departed_qty]), new Set([1, 2, 3, 4, 5, 6, 7, 8]))}
+      ${fg.shipments.length ? `<h4 class="mig-sub">出货单出库情况</h4>${tableHtml(['出货单', '状态', '明细（出货/已出库/退货）', '出库', ''], fg.shipments.map((s) => [esc(s.ship_no), tag(s.status),
+    s.lines.map((l) => `${esc(l.item_no)}：${l.qty} / ${l.out} / ${l.returned}`).join('<br>'), s.out_done ? tag('已完成') : '<span class="tag warn">未出库</span>',
+    `${canOut && !s.out_done ? `<button class="btn small" type="button" data-fgout="${s.id}">出库</button> ` : ''}${canOut && s.lines.some((l) => l.out - l.returned > 0) ? `<button class="btn small" type="button" data-fgret="${s.id}">退货</button>` : ''}`]))}` : ''}`;
+    const whs = async () => (await get('/api/e/warehouse?size=100')).rows.filter((w) => w.use_status !== '停用').map((w) => ({ id: w.id, label: w.name }));
+    const ib = box.querySelector('#fgIn');
+    if (ib) {
+      ib.onclick = async () => modal({
+        title: '产品入库（按订单）', wide: true,
+        body: `<div class="form-grid"><label><span>仓库</span><select name="warehouse_id">${optHtml(await whs(), '', false)}</select></label><label><span>备注</span><input name="remark" placeholder="如：工厂交货/包装完工"></label></div>
+          ${tableHtml(['货号', '订单数', '已入库', '本次入库', '单位成本¥（空=按样品成本）'], fg.lines.map((l) => [esc(l.item_no), l.qty, l.in_qty,
+  `<input type="number" style="width:100px" data-fq="${l.order_item_id}" value="${Math.max(0, Math.min(l.qty - l.in_qty, Math.max(0, l.produced_qty - l.in_qty)) || '')}">`, `<input type="number" step="any" style="width:110px" data-fc="${l.order_item_id}">`]))}`,
+        buttons: [{
+          text: '确认入库', cls: 'primary', onClick: async (m) => {
+            const items = fg.lines.map((l) => ({ order_item_id: l.order_item_id, qty: m.el.querySelector(`[data-fq="${l.order_item_id}"]`).value, unit_cost: m.el.querySelector(`[data-fc="${l.order_item_id}"]`).value })).filter((x) => Number(x.qty) > 0);
+            await post(`/api/orders/${o.id}/fg-in`, { ...readForm(m.el.querySelector('.form-grid')), items });
+            m.close(); toast('产品已入库', 'ok'); loadFg(box, o);
+          },
+        }],
+      });
+    }
+    box.querySelectorAll('[data-fgout]').forEach((b) => {
+      b.onclick = async () => { try { await post(`/api/shipments/${b.dataset.fgout}/fg-out`, {}); toast('已出库', 'ok'); loadFg(box, o); } catch (e) { toast(e.message, 'error'); } };
+    });
+    box.querySelectorAll('[data-fgret]').forEach((b) => {
+      const s = fg.shipments.find((x) => x.id === Number(b.dataset.fgret));
+      b.onclick = async () => modal({
+        title: `销售退货：${s.ship_no}`, body: `<div class="form-grid"><label><span>退回仓库</span><select name="warehouse_id">${optHtml(await whs(), '', false)}</select></label>
+          <label class="wide"><span class="req">退货原因</span><input name="reason" placeholder="如：客户退回破损品"></label></div>
+          ${tableHtml(['货号', '已出库', '已退', '本次退货'], s.lines.map((l) => [esc(l.item_no), l.out, l.returned, `<input type="number" style="width:90px" data-rq="${l.order_item_id}">`]))}`,
+        buttons: [{
+          text: '确认退货', cls: 'primary', onClick: async (m) => {
+            const items = s.lines.map((l) => ({ order_item_id: l.order_item_id, qty: m.el.querySelector(`[data-rq="${l.order_item_id}"]`).value })).filter((x) => Number(x.qty) > 0);
+            await post(`/api/shipments/${s.id}/fg-return`, { ...readForm(m.el.querySelector('.form-grid')), items });
+            m.close(); toast('已退货入库', 'ok'); loadFg(box, o);
+          },
+        }],
+      });
+    });
+  }
+
+  /**
    * 订单材料需求面板：按供应商分组，勾选后一键生成采购单 / Order material requirements grouped by supplier.
    * @param {HTMLElement} box
    * @param {object} o 订单 / order
@@ -197,6 +250,7 @@
         <div class="panel"><div class="panel-head"><h3>布产进度</h3>${can('production', 'add') && !o.risk_lock && !['已出货', '已完成'].includes(o.status) ? '<button class="btn small" id="produce">一键布产</button>' : ''}</div>
           ${tableHtml(['布产单', '货号', '计划', '完工', '状态'], o.productions.map((p) => [can('production', 'view') ? `<a href="#/production/${p.id}">${esc(p.prod_no)}</a>` : esc(p.prod_no), esc(p.item_no), p.plan_qty, p.reported, tag(p.status)]))}</div>
       </div>
+      <div class="panel" id="fgPanel"><h3 class="section-title">成品库存（按订单）</h3><div class="muted small">加载中…</div></div>
       <div class="panel" id="bomPanel"><h3 class="section-title">材料需求（按样品配件/包材明细分解）</h3><div class="muted small">加载中…</div></div>
       <div class="panel"><div class="panel-head"><h3>加减项（模具费、样品费、折扣、佣金扣减等）</h3>${can('order', 'edit') && o.status !== '已完成' ? '<button class="btn small" type="button" id="addCharge">＋ 登记加减项</button>' : ''}</div>
         ${tableHtml(['类型', '费用名称', '金额', '备注', '登记人', '时间', ''], o.charges.map((c) => [c.kind === '减' ? '<span class="tag warn">减</span>' : '<span class="tag ok">加</span>', esc(c.name), money(c.amount), esc(c.remark), esc(c.user_name), esc(c.created_at),
@@ -294,6 +348,8 @@
           buttons: [{ text: '生成新订单', cls: 'primary', onClick: async (m) => { const r = await post(`/api/orders/${id}/copy`, readForm(m.el)); m.close(); toast(`已生成新订单 ${r.order_no}`, 'ok'); location.hash = '#/order/' + r.id; } }],
         }));
       }
+      const fp = main.querySelector('#fgPanel');
+      if (fp) loadFg(fp, o).catch((e) => { fp.innerHTML = `<div class="alert warn"><span>${esc(e.message)}</span></div>`; });
       const bp = main.querySelector('#bomPanel');
       if (bp) loadBom(bp, o).catch((e) => { bp.innerHTML = `<div class="alert warn"><span>${esc(e.message)}</span></div>`; });
       const ac = main.querySelector('#addCharge');
