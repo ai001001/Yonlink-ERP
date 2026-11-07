@@ -11,7 +11,7 @@ const { docScope, filterItemsForDesigner, syncItems } = require('./sales');
 /** 订单头关键字段 / Key header fields watched by risk control */
 const HEADER_KEYS = { delivery_date: '交期', package_req: '包装要求', craft: '工艺要求' };
 /** 订单明细关键字段 / Key item fields watched by risk control */
-const ITEM_KEYS = { qty: '数量', craft: '工艺', spec: '规格', package: '包装' };
+const ITEM_KEYS = { qty: '数量', craft: '工艺', spec: '规格', package: '包装', package_plan_id: '包装方案' };
 
 /** 订单概要/合同条款/唛头字段（非风控关键字段）/ order summary, contract-term and shipping-mark fields (not risk-controlled) */
 const SUMMARY_FIELDS = ['po_no', 'pay_terms', 'deposit_rate', 'port_loading', 'port_dest', 'transport', 'partial_shipment', 'transshipment', 'insurance',
@@ -88,6 +88,7 @@ function getOrder(ctx, id) {
     LEFT JOIN employees e ON e.id=o.salesman_id LEFT JOIN quotes q ON q.id=o.quote_id WHERE o.id=?${sc.sql ? ' AND ' + sc.sql : ''}`).get(id, ...sc.params);
   if (!o) throw new HttpError(404, '订单不存在或无权查看');
   o.items = filterItemsForDesigner(ctx, db.prepare(`SELECT i.*, s.name sample_name, s.designer_id, s.status sample_status, d.name designer_name,
+      (SELECT name FROM sample_packages WHERE id=i.package_plan_id) package_plan_name,
       (SELECT COALESCE(SUM(si.qty),0) FROM shipment_items si JOIN shipments sh ON sh.id=si.shipment_id WHERE si.order_item_id=i.id AND sh.status<>'已取消') shipped_qty,
       (SELECT COALESCE(SUM(si.qty),0) FROM shipment_items si JOIN shipments sh ON sh.id=si.shipment_id WHERE si.order_item_id=i.id AND sh.status='已出运') departed_qty,
       (SELECT COALESCE(SUM(r.good_qty),0) FROM production_reports r JOIN productions p ON p.id=r.production_id WHERE p.order_item_id=i.id AND r.process='包装') produced_qty
@@ -242,8 +243,20 @@ function saveOrder(ctx, id) {
     const s = prev && prev.sample_id === Number(it.sample_id) ? db.prepare('SELECT * FROM samples WHERE id=?').get(prev.sample_id) : assertSampleUsable(db, Number(it.sample_id), '下单');
     if (!(num(it.qty) > 0)) throw new HttpError(400, `货号 ${s.company_no} 数量必须大于0`);
     if (prev && num(it.qty) < num(prev.shipped_qty)) throw new HttpError(409, `货号 ${s.company_no} 已出货${prev.shipped_qty}，数量不能小于已出货数量`);
+    // 包装方案：未提交时保留原值；必须属于该样品 / package plan: kept when omitted, must belong to the sample
+    let planId = it.package_plan_id !== undefined ? (it.package_plan_id === '' || it.package_plan_id === null ? null : Number(it.package_plan_id)) : (prev && prev.sample_id === s.id ? prev.package_plan_id : null);
+    let plan = null;
+    if (planId) {
+      plan = db.prepare('SELECT * FROM sample_packages WHERE id=? AND sample_id=?').get(planId, s.id);
+      if (!plan) throw new HttpError(400, `货号 ${s.company_no} 的包装方案无效`);
+    }
+    // 新增行或换了方案且包装栏为空时，用方案说明填充；其余情况保持原逻辑，避免产生无关的“包装”变更
+    // fill from the plan only for new lines or a changed plan with a blank package text
+    const planText = plan ? [plan.name, plan.package_req].filter(Boolean).join('：') : '';
+    const planChanged = !prev || (prev.package_plan_id || null) !== planId;
+    const pkgText = plan && planChanged && !String(it.package ?? '').trim() ? planText : (it.package ?? (plan ? planText : s.package_req) ?? '');
     return { id: prev ? prev.id : undefined, sample_id: s.id, item_no: s.company_no, description: it.description || s.name, qty: num(it.qty), unit_price: num(it.unit_price),
-      craft: it.craft ?? s.craft ?? '', spec: it.spec ?? '', package: it.package ?? s.package_req ?? '' };
+      craft: it.craft ?? s.craft ?? '', spec: it.spec ?? '', package: pkgText, package_plan_id: planId };
   });
   if (!old) {
     return tx(db, () => {
@@ -252,7 +265,7 @@ function saveOrder(ctx, id) {
       const rr = db.prepare(`INSERT INTO orders(order_no,salesman_id,status,${hc.join(',')}) VALUES(?,?,'待确认',${hc.map(() => '?').join(',')})`)
         .run(no, b.salesman_id && ctx.user.scope !== 'own' ? Number(b.salesman_id) : ctx.user.employee_id, ...hc.map((c) => header[c]));
       const oid = Number(rr.lastInsertRowid);
-      syncItems(db, 'order_items', 'order_id', oid, rows, ['sample_id', 'item_no', 'description', 'qty', 'unit_price', 'craft', 'spec', 'package']);
+      syncItems(db, 'order_items', 'order_id', oid, rows, ['sample_id', 'item_no', 'description', 'qty', 'unit_price', 'craft', 'spec', 'package', 'package_plan_id']);
       log(ctx, 'order', '新增订单', no);
       return getOrder(ctx, oid);
     });
@@ -273,7 +286,7 @@ function saveOrder(ctx, id) {
   return tx(db, () => {
     const hc = Object.keys(header);
     db.prepare(`UPDATE orders SET ${hc.map((c) => `${c}=?`).join(',')} WHERE id=?`).run(...hc.map((c) => header[c]), old.id);
-    syncItems(db, 'order_items', 'order_id', old.id, rows, ['sample_id', 'item_no', 'description', 'qty', 'unit_price', 'craft', 'spec', 'package'], (e) => {
+    syncItems(db, 'order_items', 'order_id', old.id, rows, ['sample_id', 'item_no', 'description', 'qty', 'unit_price', 'craft', 'spec', 'package', 'package_plan_id'], (e) => {
       const used = db.prepare('SELECT (SELECT COUNT(*) FROM shipment_items WHERE order_item_id=?) + (SELECT COUNT(*) FROM productions WHERE order_item_id=?) c').get(e.id, e.id).c;
       if (used) throw new HttpError(409, `货号 ${e.item_no} 已有出货/布产记录，不能删除，请改为调整数量`);
     });
@@ -408,7 +421,7 @@ function register(r) {
         if (!ns) throw new HttpError(409, `货号 ${i.item_no} 已锁定且没有可用的新货号，无法翻单`);
         sid = ns.id;
       }
-      return { sample_id: sid, description: i.description, qty: i.qty, unit_price: i.unit_price, craft: i.craft, spec: i.spec, package: i.package };
+      return { sample_id: sid, description: i.description, qty: i.qty, unit_price: i.unit_price, craft: i.craft, spec: i.spec, package: i.package, package_plan_id: sid === i.sample_id ? i.package_plan_id : null };
     });
     const body = {
       customer_id: o.customer_id, currency: o.currency, term: o.term, delivery_date: ctx.body.delivery_date || today(60), package_req: o.package_req, craft: o.craft,
@@ -505,7 +518,10 @@ function createShipment(ctx, o, b) {
     if (!oi) throw new HttpError(400, '订单明细不存在');
     assertSampleShippable(ctx.db, oi.sample_id, o);
     if (num(x.qty) > oi.qty - oi.shipped_qty) throw new HttpError(409, `货号${oi.item_no}可出货数量仅剩${oi.qty - oi.shipped_qty}`);
-    const s = ctx.db.prepare('SELECT * FROM samples WHERE id=?').get(oi.sample_id);
+    const s0 = ctx.db.prepare('SELECT * FROM samples WHERE id=?').get(oi.sample_id);
+    // 订单选了包装方案时按方案的装箱数、箱规、毛净重计算 / use the chosen package plan when present
+    const plan = oi.package_plan_id ? ctx.db.prepare('SELECT * FROM sample_packages WHERE id=?').get(oi.package_plan_id) : null;
+    const s = plan ? { ...s0, pcs_per_carton: plan.outer_qty, outer_l: plan.outer_l, outer_w: plan.outer_w, outer_h: plan.outer_h, cbm: plan.cbm, gross_weight: plan.gw, net_weight: plan.nw } : s0;
     const cartons = num(x.cartons) || (s.pcs_per_carton ? Math.ceil(num(x.qty) / s.pcs_per_carton) : 0);
     const cbm = s.outer_l ? round(cartons * s.outer_l * s.outer_w * s.outer_h / 1e6, 3) : (num(s.cbm) ? round(cartons * num(s.cbm), 3) : 0);
     return { order_item_id: oi.id, qty: num(x.qty), cartons, cbm, gw: round(cartons * num(s.gross_weight), 2), nw: round(cartons * num(s.net_weight), 2), container_no: x.container_no || b.container_no || '' };

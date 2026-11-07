@@ -131,6 +131,11 @@ CREATE TABLE IF NOT EXISTS customer_contacts (id INTEGER PRIMARY KEY, customer_i
 CREATE TABLE IF NOT EXISTS customer_marks (id INTEGER PRIMARY KEY, customer_id INTEGER, name TEXT, front_mark TEXT, side_mark TEXT, inner_mark TEXT, is_default TEXT DEFAULT '否', remark TEXT);
 CREATE TABLE IF NOT EXISTS customer_forwarders (id INTEGER PRIMARY KEY, customer_id INTEGER, agency_id INTEGER, name TEXT, contact TEXT, phone TEXT, email TEXT, port TEXT, remark TEXT);
 CREATE TABLE IF NOT EXISTS customer_banks (id INTEGER PRIMARY KEY, customer_id INTEGER, bank_name TEXT, account_name TEXT, account_no TEXT, swift TEXT, currency TEXT, bank_address TEXT, remark TEXT);
+CREATE TABLE IF NOT EXISTS sample_parts (id INTEGER PRIMARY KEY, sample_id INTEGER, kind TEXT DEFAULT '配件', code TEXT, name TEXT, spec TEXT, qty REAL DEFAULT 1, per TEXT DEFAULT '每只',
+  unit TEXT, unit_price REAL DEFAULT 0, supplier_id INTEGER, remark TEXT);
+CREATE TABLE IF NOT EXISTS sample_processes (id INTEGER PRIMARY KEY, sample_id INTEGER, seq INTEGER, name TEXT, supplier_id INTEGER, price REAL DEFAULT 0, remark TEXT);
+CREATE TABLE IF NOT EXISTS sample_packages (id INTEGER PRIMARY KEY, sample_id INTEGER, name TEXT, inner_qty INTEGER, middle_qty INTEGER, outer_qty INTEGER, outer_l REAL, outer_w REAL, outer_h REAL,
+  cbm REAL, gw REAL, nw REAL, package_req TEXT, is_default TEXT DEFAULT '否', remark TEXT);
 CREATE TABLE IF NOT EXISTS ship_invoices (id INTEGER PRIMARY KEY, invoice_no TEXT UNIQUE, customer_id INTEGER, currency TEXT, invoice_date TEXT, due_date TEXT,
   port_loading TEXT, port_dest TEXT, transport TEXT, vessel TEXT, etd TEXT, eta TEXT, bl_no TEXT, container_nos TEXT, seal_nos TEXT, consignee TEXT, notify TEXT,
   shipping_marks TEXT, forwarder_id INTEGER, customs_no TEXT, trade_term TEXT, status TEXT DEFAULT '草稿', remark TEXT, user_name TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
@@ -403,6 +408,8 @@ const ADDED_COLUMNS = [
   ['shipment_items', 'container_no', 'TEXT'],
   ['shipment_items', 'gw', 'REAL'],
   ['shipment_items', 'nw', 'REAL'],
+  // 批次4：订单明细选用包装方案 / batch 4: package plan chosen on order lines
+  ['order_items', 'package_plan_id', 'INTEGER'],
 ];
 
 /** 新增系统参数默认值 / Default values for settings added after v1 */

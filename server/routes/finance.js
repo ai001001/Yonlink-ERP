@@ -68,6 +68,40 @@ function addReceipt(ctx, b) {
 }
 
 /**
+ * 订单材料需求：订单数量 × 样品配件/包材用量（“每箱”按订单所选包装方案或样品装箱数折算箱数），扣除本订单已采购数量
+ * Order material requirements from sample parts/packaging, net of quantities already purchased for the order.
+ * @param {object} ctx
+ * @param {number|string} id 订单ID / order id
+ * @returns {{order_id:number, order_no:string, lines:object[]}}
+ */
+function orderBom(ctx, id) {
+  const { getOrder } = require('./orders');
+  const o = getOrder(ctx, id);
+  const { db } = ctx;
+  const lines = [];
+  for (const it of o.items) {
+    const s = db.prepare('SELECT pcs_per_carton FROM samples WHERE id=?').get(it.sample_id) || {};
+    const plan = it.package_plan_id ? db.prepare('SELECT outer_qty FROM sample_packages WHERE id=?').get(it.package_plan_id) : null;
+    const perCarton = num(plan && plan.outer_qty) || num(s.pcs_per_carton);
+    const cartons = perCarton ? Math.ceil(num(it.qty) / perCarton) : 0;
+    const parts = db.prepare('SELECT p.*, sp.name supplier_name FROM sample_parts p LEFT JOIN suppliers sp ON sp.id=p.supplier_id WHERE p.sample_id=? ORDER BY p.kind, p.id').all(it.sample_id);
+    for (const p of parts) {
+      const code = p.code || `${it.item_no}-${p.name}`;
+      const need = round(p.per === '每箱' ? cartons * num(p.qty) : num(it.qty) * num(p.qty), 2);
+      const bought = db.prepare(`SELECT COALESCE(SUM(pi.qty),0) v FROM purchase_items pi JOIN purchases pu ON pu.id=pi.po_id
+        WHERE pu.order_id=? AND pi.code=? AND (pi.order_item_id=? OR pi.order_item_id IS NULL)`).get(o.id, code, it.id).v;
+      lines.push({
+        key: `${it.id}:${p.id}`, order_item_id: it.id, item_no: it.item_no, order_qty: it.qty, cartons, kind: p.kind, code, name: p.name, spec: p.spec, per: p.per, usage: p.qty,
+        unit: p.unit, unit_price: num(p.unit_price), supplier_id: p.supplier_id, supplier_name: p.supplier_name, need, purchased: round(bought, 2), remain: round(Math.max(0, need - bought), 2),
+        warn: p.per === '每箱' && !perCarton ? '缺少装箱数，无法按箱计算' : '',
+      });
+    }
+  }
+  return { order_id: o.id, order_no: o.order_no, risk_lock: o.risk_lock, lines };
+}
+
+/**
+ * 读取采购单 / Load a purchase order with items, payments and invoices./**
  * 读取采购单 / Load a purchase order with items, payments and invoices.
  * @param {object} ctx
  * @param {number|string} id
@@ -224,6 +258,27 @@ function register(r) {
     });
   };
   r.post('/api/purchases', (ctx) => { need(ctx, 'purchase', 'add'); return savePurchase(ctx); });
+
+  // ---- 订单材料需求（按样品配件/包材明细分解，亿星“订单直接分解包材采购”）/ order BOM requirements ----
+  r.get('/api/orders/:id/bom', (ctx) => {
+    if (!can(ctx.user, 'order', 'view') && !can(ctx.user, 'purchase', 'view')) throw new HttpError(403, '无权查看');
+    return orderBom(ctx, ctx.params.id);
+  });
+  r.post('/api/orders/:id/bom-purchase', (ctx) => {
+    need(ctx, 'purchase', 'add');
+    const bom = orderBom(ctx, ctx.params.id);
+    const b = ctx.body;
+    if (!b.supplier_id) throw new HttpError(400, '请选择供应商（明细中未指定供应商的需先在样品配件明细中维护，或在此选择）');
+    const keys = new Set((b.keys || []).map(String));
+    const lines = bom.lines.filter((l) => keys.has(l.key) && l.remain > 0);
+    if (!lines.length) throw new HttpError(400, '请勾选还需采购的物料');
+    const qtyOf = (l) => (b.qty && b.qty[l.key] !== undefined ? num(b.qty[l.key]) : l.remain);
+    const items = lines.map((l) => ({ code: l.code, name: l.name + (l.spec ? ' ' + l.spec : ''), unit: l.unit || '个', qty: qtyOf(l), price: l.unit_price, order_item_id: l.order_item_id }));
+    if (items.some((i) => !(i.qty > 0))) throw new HttpError(400, '采购数量必须大于0');
+    const p = savePurchase({ ...ctx, body: { supplier_id: Number(b.supplier_id), type: '原辅材料', order_id: bom.order_id, due_date: b.due_date, items, remark: `按订单${bom.order_no}材料需求分解生成` } });
+    log(ctx, 'purchase', '订单材料分解生成采购单', p.po_no, `${bom.order_no} ${items.length}项`);
+    return p;
+  });
   r.put('/api/purchases/:id', (ctx) => { need(ctx, 'purchase', 'edit'); return savePurchase(ctx, ctx.params.id); });
   r.post('/api/purchases/:id/qc', (ctx) => {
     need(ctx, 'purchase', 'edit');

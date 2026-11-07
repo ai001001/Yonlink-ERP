@@ -90,6 +90,39 @@ function priceQuote(q, items, auto) {
 }
 
 /**
+ * 样品明细与每只成本（每箱用量按默认包装方案或装箱数折算）/ Sample BOM with per-piece cost.
+ * @param {object} ctx
+ * @param {number|string} id 样品ID / sample id
+ * @returns {object}
+ */
+function sampleBom(ctx, id) {
+  const s = require('./base').getEntity(ctx, 'sample', id);
+  const { db } = ctx;
+  const plan = db.prepare("SELECT * FROM sample_packages WHERE sample_id=? ORDER BY is_default='是' DESC, id LIMIT 1").get(s.id);
+  const perCarton = num(plan && plan.outer_qty) || num(s.pcs_per_carton) || 0;
+  const parts = db.prepare('SELECT p.*, sp.name supplier_name FROM sample_parts p LEFT JOIN suppliers sp ON sp.id=p.supplier_id WHERE p.sample_id=? ORDER BY p.kind, p.id').all(s.id);
+  const warnings = [];
+  for (const p of parts) {
+    const lineCost = num(p.qty) * num(p.unit_price);
+    if (p.per === '每箱') {
+      if (!perCarton) warnings.push(`${p.name} 按“每箱”计，但样品没有装箱数，未计入成本`);
+      p.cost_per_pc = perCarton ? round(lineCost / perCarton, 4) : 0;
+    } else p.cost_per_pc = round(lineCost, 4);
+  }
+  const processes = db.prepare('SELECT p.*, sp.name supplier_name FROM sample_processes p LEFT JOIN suppliers sp ON sp.id=p.supplier_id WHERE p.sample_id=? ORDER BY p.seq, p.id').all(s.id);
+  const sum = (arr) => round(arr.reduce((a, x) => a + x, 0), 4);
+  const partsCost = sum(parts.filter((p) => p.kind !== '包材').map((p) => p.cost_per_pc));
+  const packCost = sum(parts.filter((p) => p.kind === '包材').map((p) => p.cost_per_pc));
+  const procCost = sum(processes.map((p) => num(p.price)));
+  return {
+    sample_id: s.id, company_no: s.company_no, per_carton: perCarton, parts, processes, warnings,
+    packages: db.prepare('SELECT * FROM sample_packages WHERE sample_id=? ORDER BY id').all(s.id),
+    cost: { parts: partsCost, packaging: packCost, material: round(partsCost + packCost, 4), process: procCost, total: round(partsCost + packCost + procCost, 4) },
+    current: { material_cost: s.material_cost, labor_cost: s.labor_cost },
+  };
+}
+
+/**
  * 读取报价单详情 / Load quote with items.
  * @param {object} ctx
  * @param {number|string} id
@@ -667,6 +700,24 @@ function register(r) {
       receipts: db.prepare('SELECT r.*, o.order_no FROM receipts r JOIN orders o ON o.id=r.order_id WHERE o.customer_id=? ORDER BY r.id DESC').all(c.id),
     };
   });
+  // 样品明细汇总：配件/包材/工序成本（每只），可回写样品成本 / sample BOM cost roll-up per piece
+  r.get('/api/samples/:id/bom', (ctx) => {
+    need(ctx, 'sample', 'view');
+    return sampleBom(ctx, ctx.params.id);
+  });
+  r.post('/api/samples/:id/apply-bom-cost', (ctx) => {
+    need(ctx, 'sample', 'edit');
+    const b = sampleBom(ctx, ctx.params.id);
+    if (!b.parts.length && !b.processes.length) throw new HttpError(400, '没有配件/包材/工序明细，无法计算成本');
+    const s = ctx.db.prepare('SELECT * FROM samples WHERE id=?').get(b.sample_id);
+    tx(ctx.db, () => {
+      ctx.db.prepare('UPDATE samples SET material_cost=?, labor_cost=? WHERE id=?').run(b.cost.material, b.cost.process, s.id);
+      ctx.db.prepare("INSERT INTO sample_revisions(sample_id,stage,content,user_name) VALUES(?,'打样',?,?)")
+        .run(s.id, `按明细更新成本：材料 ${s.material_cost ?? 0} → ${b.cost.material}，人工 ${s.labor_cost ?? 0} → ${b.cost.process}`, ctx.user.name);
+    });
+    log(ctx, 'sample', '按明细更新样品成本', s.company_no, b.cost);
+    return b;
+  });
   r.get('/api/samples/:id/overview', (ctx) => {
     need(ctx, 'sample', 'view');
     const { db } = ctx;
@@ -853,4 +904,4 @@ function register(r) {
   });
 }
 
-module.exports = { register, docScope, filterItemsForDesigner, syncItems, priceQuote, inquiryXlsx, getInquiry };
+module.exports = { register, docScope, filterItemsForDesigner, syncItems, priceQuote, inquiryXlsx, getInquiry, sampleBom };

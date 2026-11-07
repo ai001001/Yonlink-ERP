@@ -286,6 +286,23 @@ function beforeSave(ctx, key, data, old) {
     db.prepare("UPDATE customer_contacts SET is_main='否' WHERE customer_id=? AND id<>?").run(cid, old ? old.id : -1);
     db.prepare('UPDATE customers SET contact=?, email=COALESCE(?, email), phone=COALESCE(?, phone) WHERE id=?').run(merged.name, merged.email || null, merged.phone || null, cid);
   }
+  if (key === 'sample_package') {
+    const m = { ...(old || {}), ...data };
+    if (!(num(m.outer_qty) > 0)) throw new HttpError(400, '外箱装箱数必须大于0');
+    if (num(m.gw) > 0 && num(m.nw) > num(m.gw)) throw new HttpError(400, '净重不能大于毛重');
+    // CBM 留空按外箱尺寸计算 / blank CBM computed from carton size
+    if (!(num(m.cbm) > 0) && m.outer_l && m.outer_w && m.outer_h) data.cbm = Math.round(num(m.outer_l) * num(m.outer_w) * num(m.outer_h) / 1e6 * 10000) / 10000;
+    if (m.is_default === '是') {
+      // 默认方案同步到样品档案的包装资料 / sync the default plan to the sample's packing fields
+      const sid = m.sample_id;
+      db.prepare("UPDATE sample_packages SET is_default='否' WHERE sample_id=? AND id<>?").run(sid, old ? old.id : -1);
+      const cbm = data.cbm !== undefined ? data.cbm : m.cbm;
+      db.prepare(`UPDATE samples SET pack_inner=?, pack_middle=?, pcs_per_carton=?, outer_l=?, outer_w=?, outer_h=?, cbm=?, gross_weight=?, net_weight=?,
+        package_req=COALESCE(?, package_req) WHERE id=?`).run(m.inner_qty ?? null, m.middle_qty ?? null, m.outer_qty, m.outer_l ?? null, m.outer_w ?? null, m.outer_h ?? null,
+        cbm ?? null, m.gw ?? null, m.nw ?? null, m.package_req || m.name || null, sid);
+    }
+  }
+  if (key === 'sample_part' && num({ ...(old || {}), ...data }.qty) <= 0) throw new HttpError(400, '用量必须大于0');
   if (key === 'customer_mark' && (data.is_default ?? (old && old.is_default)) === '是') {
     db.prepare("UPDATE customer_marks SET is_default='否' WHERE customer_id=? AND id<>?").run(data.customer_id ?? old.customer_id, old ? old.id : -1);
   }

@@ -206,6 +206,68 @@
     }
   });
 
+  /** 样品明细页签（亿星：配件明细、包材明细、工序明细、多包装方案）/ sample BOM tabs */
+  const SAMPLE_TABS = [['parts', '配件明细', 'sample_part', '配件'], ['pack', '包材明细', 'sample_part', '包材'], ['proc', '工序明细', 'sample_process'], ['plans', '包装方案', 'sample_package']];
+
+  /**
+   * 渲染样品明细页签与成本汇总 / Render the sample BOM tabs with the cost roll-up.
+   * @param {HTMLElement} box 容器 / container
+   * @param {number} sampleId 样品ID / sample id
+   * @param {string} [active] 当前页签 / active tab
+   */
+  async function sampleTabs(box, sampleId, active) {
+    if (!ERP.state.meta.entities.sample_part) { box.remove(); return; }
+    const bom = await get(`/api/samples/${sampleId}/bom`);
+    const cur = SAMPLE_TABS.find((t) => t[0] === active) || SAMPLE_TABS[0];
+    const [, label, key, kind] = cur;
+    const ent = ERP.state.meta.entities[key];
+    const rows = key === 'sample_part' ? bom.parts.filter((p) => p.kind === kind) : key === 'sample_process' ? bom.processes : bom.packages;
+    const counts = { parts: bom.parts.filter((p) => p.kind === '配件').length, pack: bom.parts.filter((p) => p.kind === '包材').length, proc: bom.processes.length, plans: bom.packages.length };
+    const fields = ent.fields.filter((f) => !['sample_id', 'kind'].includes(f.name) && f.list !== false);
+    const canEdit = can('sample', 'edit');
+    const show = (f, r) => (f.type === 'ref' ? esc(r[f.name.replace('_id', '_name')] ?? r[f.name + '_label'] ?? '') : f.type === 'textarea' ? `<span class="pre">${esc(r[f.name])}</span>` : esc(r[f.name]));
+    const extra = key === 'sample_part' ? ['每只成本¥'] : [];
+    box.innerHTML = `<div class="panel-head"><div class="tabs">${SAMPLE_TABS.map(([k, l]) => `<button class="tab ${k === cur[0] ? 'active' : ''}" type="button" data-stab="${k}">${l} <span class="muted small">${counts[k]}</span></button>`).join('')}</div>
+      ${canEdit ? `<button class="btn small primary" type="button" data-sadd>＋ 新增${esc(label.replace('明细', ''))}</button>` : ''}</div>
+      ${tableHtml([...fields.map((f) => f.label), ...extra, ...(canEdit ? ['操作'] : [])], rows.map((r) => [...fields.map((f) => show(f, r)), ...(key === 'sample_part' ? [money(r.cost_per_pc)] : []),
+    ...(canEdit ? [`<button class="btn small" type="button" data-sedit="${r.id}">编辑</button> <button class="btn small danger" type="button" data-sdel="${r.id}">删除</button>`] : [])]))}
+      <div class="kv" style="margin-top:10px"><div><b>配件成本/只</b><span>¥${money(bom.cost.parts)}</span></div><div><b>包材成本/只</b><span>¥${money(bom.cost.packaging)}</span></div>
+        <div><b>工序工价/只</b><span>¥${money(bom.cost.process)}</span></div><div><b>明细合计/只</b><span><b>¥${money(bom.cost.total)}</b></span></div>
+        <div><b>档案现成本</b><span>材料¥${money(bom.current.material_cost)} + 人工¥${money(bom.current.labor_cost)}</span></div><div><b>装箱数</b><span>${bom.per_carton || '-'}</span></div></div>
+      ${bom.warnings.length ? `<div class="alert warn" style="margin-top:6px"><span>${esc(bom.warnings.join('；'))}</span></div>` : ''}
+      ${canEdit && (bom.parts.length || bom.processes.length) ? '<div class="toolbar" style="margin-top:8px"><button class="btn small" type="button" data-apply>按明细更新样品成本（材料=配件+包材，人工=工序）</button></div>' : ''}
+      ${key === 'sample_package' ? '<p class="muted small">“默认方案”会同步到样品档案的包装率、外箱尺寸、CBM、毛净重；订单明细可另选方案，出货时按所选方案计算箱数。</p>' : ''}`;
+    box.querySelectorAll('[data-stab]').forEach((b) => { b.onclick = () => sampleTabs(box, sampleId, b.dataset.stab); });
+    const form = async (row) => modal({
+      title: `${row ? '编辑' : '新增'}${label.replace('明细', '')}`, wide: true, body: await formHtml(ent.fields.filter((f) => !['sample_id', 'kind'].includes(f.name)), row || {}),
+      buttons: [{
+        text: '保存', cls: 'primary', onClick: async (m) => {
+          const body = { ...readForm(m.el), sample_id: sampleId, ...(kind ? { kind } : {}) };
+          if (row) await put(`/api/e/${key}/${row.id}`, body); else await post(`/api/e/${key}`, body);
+          m.close();
+          toast('已保存', 'ok');
+          if (key === 'sample_package' && body.is_default === '是') ERP.navigate(); else sampleTabs(box, sampleId, cur[0]);
+        },
+      }],
+    });
+    const ab = box.querySelector('[data-sadd]');
+    if (ab) ab.onclick = () => form(null);
+    box.querySelectorAll('[data-sedit]').forEach((b) => { b.onclick = async () => form(await get(`/api/e/${key}/${b.dataset.sedit}`)); });
+    box.querySelectorAll('[data-sdel]').forEach((b) => {
+      b.onclick = async () => {
+        if (!(await confirmBox('确定删除这条明细？'))) return;
+        try { await del(`/api/e/${key}/${b.dataset.sdel}`); toast('已删除', 'ok'); sampleTabs(box, sampleId, cur[0]); } catch (e) { toast(e.message, 'error'); }
+      };
+    });
+    const ap = box.querySelector('[data-apply]');
+    if (ap) {
+      ap.onclick = async () => {
+        if (!(await confirmBox(`把样品成本更新为：材料¥${bom.cost.material}、人工¥${bom.cost.process}？会记录到改样日志。`))) return;
+        try { await post(`/api/samples/${sampleId}/apply-bom-cost`); toast('样品成本已更新', 'ok'); ERP.navigate(); } catch (e) { toast(e.message, 'error'); }
+      };
+    }
+  }
+
   // ---------- 样品详情 / sample detail ----------
   route(/^\/sample\/(\d+)$/, async ([id], main) => {
     const d = await get(`/api/samples/${id}/overview`);
@@ -234,12 +296,14 @@
         ${can('sample', 'edit') ? '<label class="btn small">＋ 上传图片<input type="file" id="upl" accept="image/*" multiple hidden></label>' : ''}</div>
       <div class="gallery">${imgs.length ? imgs.map((u) => `<figure><img data-ref="${esc(u)}" alt="样品图片" loading="lazy">
         ${can('sample', 'edit') && u.startsWith('file:') ? `<button class="btn small danger" data-delimg="${esc(u.slice(5))}" title="删除">✕</button>` : ''}</figure>`).join('') : '<div class="muted small">暂无图片（可上传多角度样品照片，自动压缩）</div>'}</div></div>
+      <div class="panel" id="bomTabs"></div>
       ${sec('改样日志', ['时间', '阶段', '内容', '记录人'], d.revisions.map((x) => [esc(x.created_at), tag(x.stage), esc(x.content), esc(x.user_name)]))}
       ${d.quotes ? sec('报价记录', ['报价单号', '客户', '数量', '单价', '新货号', '状态'], d.quotes.map((x) => [`<a href="#/quote/${x.quote_id}">${esc(x.quote_no)}</a>`, esc(x.customer_name), esc(x.qty), `${money(x.price)} ${esc(x.currency)}`, esc(x.new_item_no), tag(x.status)])) : ''}
       ${d.sends ? sec('送样记录', ['送样单号', '客户', '数量', '新货号', '状态'], d.sends.map((x) => [`<a href="#/send/${x.send_id}">${esc(x.send_no)}</a>`, esc(x.customer_name), esc(x.qty), esc(x.new_item_no), tag(x.status)])) : ''}
       ${d.orders ? sec('订单记录', ['订单号', '客户', '数量', '单价', '状态'], d.orders.map((x) => [`<a href="#/order/${x.order_id}">${esc(x.order_no)}</a>`, esc(x.customer_name), esc(x.qty), `${money(x.unit_price)} ${esc(x.currency)}`, tag(x.status)])) : ''}
       <div class="panel"><h3 class="section-title">送样转化率</h3><div class="kv"><div><b>送样次数</b><span>${d.stats.sends}</span></div><div><b>成交订单数</b><span>${d.stats.orders}</span></div><div><b>转化率</b><span>${d.stats.rate}</span></div></div></div>`;
     ERP.loadImages(main);
+    sampleTabs(main.querySelector('#bomTabs'), Number(id));
     main.querySelectorAll('.gallery img').forEach((im) => {
       im.onclick = () => modal({ title: `${s.company_no} 样品图片`, wide: true, body: `<img src="${im.src}" alt="样品图片" style="max-width:100%;display:block;margin:auto">` });
     });

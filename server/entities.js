@@ -187,6 +187,37 @@ const ENTITIES = {
       f('images', '图片链接(多张用逗号分隔)', { type: 'textarea', list: false }), f('remark', '备注', { type: 'textarea', list: false }),
     ],
   },
+  // ---- 样品明细（亿星：配件明细、包材明细、工序明细、多包装方案）/ sample BOM tabs modelled on 亿星 ----
+  sample_part: {
+    module: 'sample', table: 'sample_parts', title: '配件/包材明细', search: ['code', 'name', 'spec'], child: true,
+    parent: { entity: 'sample', field: 'sample_id' }, scope: { designer: 'sample_id IN (SELECT id FROM samples WHERE designer_id = :emp)' },
+    fields: [
+      f('sample_id', '样品', { type: 'ref', ref: 'sample', required: true }), f('kind', '类别', { type: 'select', options: ['配件', '包材'], default: '配件', required: true }),
+      f('code', '物料编码'), f('name', '名称', { required: true }), f('spec', '规格'),
+      f('qty', '用量', { type: 'number', default: 1 }), f('per', '用量按', { type: 'select', options: ['每只', '每箱'], default: '每只' }), f('unit', '单位'),
+      f('unit_price', '单价¥', { type: 'number' }), f('supplier_id', '供应商', { type: 'ref', ref: 'supplier' }), f('remark', '备注', { type: 'textarea', list: false }),
+    ],
+  },
+  sample_process: {
+    module: 'sample', table: 'sample_processes', title: '工序明细', search: ['name'], child: true, order: 'seq',
+    parent: { entity: 'sample', field: 'sample_id' }, scope: { designer: 'sample_id IN (SELECT id FROM samples WHERE designer_id = :emp)' },
+    fields: [
+      f('sample_id', '样品', { type: 'ref', ref: 'sample', required: true }), f('seq', '顺序', { type: 'number' }), f('name', '工序', { required: true }),
+      f('price', '工价¥/只', { type: 'number' }), f('supplier_id', '外发加工厂', { type: 'ref', ref: 'supplier' }), f('remark', '备注', { type: 'textarea', list: false }),
+    ],
+  },
+  sample_package: {
+    module: 'sample', table: 'sample_packages', title: '包装方案', search: ['name', 'package_req'], child: true,
+    parent: { entity: 'sample', field: 'sample_id' }, scope: { designer: 'sample_id IN (SELECT id FROM samples WHERE designer_id = :emp)' },
+    fields: [
+      f('sample_id', '样品', { type: 'ref', ref: 'sample', required: true }), f('name', '方案名称', { required: true }),
+      f('inner_qty', '内', { type: 'number' }), f('middle_qty', '中', { type: 'number' }), f('outer_qty', '外（装箱数）', { type: 'number', required: true }),
+      f('outer_l', '外箱长cm', { type: 'number' }), f('outer_w', '外箱宽cm', { type: 'number' }), f('outer_h', '外箱高cm', { type: 'number' }),
+      f('cbm', 'CBM（空=按尺寸算）', { type: 'number' }), f('gw', '毛重kg/箱', { type: 'number' }), f('nw', '净重kg/箱', { type: 'number' }),
+      f('package_req', '包装说明', { type: 'textarea' }), f('is_default', '默认方案', { type: 'select', options: ['是', '否'], default: '否' }),
+      f('remark', '备注', { type: 'textarea', list: false }),
+    ],
+  },
   sample_revision: {
     module: 'sample', table: 'sample_revisions', title: '改样日志', order: 'id DESC', search: ['content'],
     scope: { designer: 'sample_id IN (SELECT id FROM samples WHERE designer_id = :emp)' },
@@ -248,12 +279,16 @@ const NAV = {
   customer_mark: { tree: ['customer_id'], schemes: [['customer_id']], quick: ['name'] },
   customer_forwarder: { tree: ['customer_id'], schemes: [['customer_id']], quick: ['name', 'contact'] },
   customer_bank: { tree: ['customer_id', 'currency'], schemes: [['customer_id']], quick: ['bank_name', 'account_no'] },
+  sample_part: { tree: ['kind', 'supplier_id', 'unit'], schemes: [['kind', 'supplier_id']], quick: ['code', 'name'] },
+  sample_process: { tree: ['name', 'supplier_id'], schemes: [['name']], quick: ['name'] },
+  sample_package: { tree: ['name', 'is_default'], schemes: [['name']], quick: ['name'] },
 };
 for (const [k, v] of Object.entries(NAV)) if (ENTITIES[k]) Object.assign(ENTITIES[k], v);
 
 /** 客户的子表（删除客户时一并删除）/ Child tables removed together with a customer */
 const CHILDREN = {
   customer: [['customer_contacts', 'customer_id'], ['customer_marks', 'customer_id'], ['customer_forwarders', 'customer_id'], ['customer_banks', 'customer_id']],
+  sample: [['sample_parts', 'sample_id'], ['sample_processes', 'sample_id'], ['sample_packages', 'sample_id']],
 };
 
 /** 引用实体显示字段 / Display expression for referenced entities */

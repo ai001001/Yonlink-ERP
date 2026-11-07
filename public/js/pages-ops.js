@@ -78,6 +78,47 @@
     });
   }
 
+  /**
+   * 订单材料需求面板：按供应商分组，勾选后一键生成采购单 / Order material requirements grouped by supplier.
+   * @param {HTMLElement} box
+   * @param {object} o 订单 / order
+   */
+  async function loadBom(box, o) {
+    const bom = await get(`/api/orders/${o.id}/bom`);
+    if (!bom.lines.length) {
+      box.innerHTML = '<h3 class="section-title">材料需求（按样品配件/包材明细分解）</h3><div class="muted small">订单货号还没有维护配件/包材明细（在样品详情“配件明细/包材明细”页签维护后，这里会自动算出需求）。</div>';
+      return;
+    }
+    const canBuy = can('purchase', 'add') && !o.risk_lock;
+    const groups = new Map();
+    for (const l of bom.lines) {
+      const k = l.supplier_id || 0;
+      if (!groups.has(k)) groups.set(k, { id: l.supplier_id, name: l.supplier_name || '（未指定供应商）', lines: [] });
+      groups.get(k).lines.push(l);
+    }
+    const suppliers = canBuy ? await options('supplier') : [];
+    box.innerHTML = `<h3 class="section-title">材料需求（按样品配件/包材明细分解）</h3>
+      <p class="muted small">需求 = 订单数量 × 用量（“每箱”按订单所选包装方案或样品装箱数折算箱数），已扣除本订单已下采购的数量。${o.risk_lock ? '订单被风控锁定，暂不能生成采购单。' : ''}</p>
+      ${[...groups.values()].map((g, gi) => `<div style="border:1px solid var(--line);border-radius:6px;padding:8px;margin-bottom:8px">
+        <div class="toolbar" style="margin-bottom:6px"><b>${esc(g.name)}</b>${canBuy ? `<select data-gsup="${gi}" style="width:180px">${optHtml(suppliers, g.id || '')}</select><button class="btn small primary" type="button" data-gbuy="${gi}">生成采购单</button>` : ''}</div>
+        ${tableHtml(['', '货号', '类别', '物料编码', '名称', '规格', '用量', '需求', '已采购', '待采购', '本次采购', '单价¥'], g.lines.map((l) => [
+    canBuy && l.remain > 0 ? `<input type="checkbox" data-gk="${gi}" value="${esc(l.key)}" checked>` : '', esc(l.item_no), esc(l.kind), esc(l.code), esc(l.name), esc(l.spec),
+    `${l.usage}${l.per === '每箱' ? '/箱' : '/只'}`, l.need + (l.warn ? ` <span class="tag warn" title="${esc(l.warn)}">!</span>` : ''), l.purchased, l.remain > 0 ? `<b>${l.remain}</b>` : '0',
+    canBuy && l.remain > 0 ? `<input type="number" step="any" style="width:90px" data-gq="${esc(l.key)}" value="${l.remain}">` : '', money(l.unit_price)]))}</div>`).join('')}`;
+    box.querySelectorAll('[data-gbuy]').forEach((b) => {
+      b.onclick = async () => {
+        const gi = b.dataset.gbuy;
+        const keys = [...box.querySelectorAll(`[data-gk="${gi}"]:checked`)].map((c) => c.value);
+        const qty = Object.fromEntries(keys.map((k) => [k, Number(box.querySelector(`[data-gq="${CSS.escape(k)}"]`).value)]));
+        try {
+          const r = await post(`/api/orders/${o.id}/bom-purchase`, { supplier_id: box.querySelector(`[data-gsup="${gi}"]`).value, keys, qty });
+          toast(`已生成采购单 ${r.po_no}`, 'ok');
+          ERP.navigate();
+        } catch (e) { toast(e.message, 'error'); }
+      };
+    });
+  }
+
   // ---------- 订单详情/编辑 / order editor ----------
   route(/^\/order\/(new|\d+)$/, async ([id], main) => {
     const isNew = id === 'new';
@@ -95,6 +136,7 @@
       <td style="min-width:100px"><input data-f="craft" value="${esc(it.craft)}" ${dis}></td>
       <td style="min-width:100px"><input data-f="spec" value="${esc(it.spec)}" ${dis}></td>
       <td style="min-width:110px"><input data-f="package" value="${esc(it.package)}" ${dis}></td>
+      <td style="min-width:120px"><select data-f="package_plan_id" data-plan="${esc(it.package_plan_id || '')}" ${dis}><option value="${esc(it.package_plan_id || '')}">${esc(it.package_plan_name || '（样品默认）')}</option></select></td>
       <td class="num">${it.id ? `${it.produced_qty || 0} / ${it.shipped_qty || 0}` : ''}</td>
       <td>${editable ? '<button class="btn small danger" data-rm type="button">删</button>' : ''}</td></tr>`;
     const tasksHtml = (c) => tableHtml(['部门', '联动修正内容', '状态', '处理人', '处理说明', ''], c.tasks.map((t) => [esc(t.dept), esc(t.content), tag(t.status), esc(t.handler), esc(t.handle_note),
@@ -136,7 +178,7 @@
           <label><span>内盒唛</span><textarea name="inner_mark" rows="4" ${dis}>${esc(o.inner_mark)}</textarea></label>
         </form>${isNew ? '<p class="muted small">新订单留空的付款方式、目的港、唛头会自动从客户档案带出。</p>' : ''}</div>`}
       <div class="panel"><div class="panel-head"><h3>订单产品 ${designer ? '<span class="muted small">（仅显示本人设计样品）</span>' : ''}</h3>${editable ? '<span class="toolbar"><button class="btn" id="histItem" type="button">历史记录导入</button><button class="btn" id="addItem" type="button">＋ 添加产品</button></span>' : ''}</div>
-        <div class="table-wrap items-table"><table><thead><tr><th>货号</th><th>描述</th><th>数量</th><th>单价</th><th>工艺</th><th>规格</th><th>包装</th><th class="num">完工/已排出货</th><th></th></tr></thead><tbody id="items">${o.items.map(row).join('')}</tbody></table></div></div>
+        <div class="table-wrap items-table"><table><thead><tr><th>货号</th><th>描述</th><th>数量</th><th>单价</th><th>工艺</th><th>规格</th><th>包装</th><th>包装方案</th><th class="num">完工/已排出货</th><th></th></tr></thead><tbody id="items">${o.items.map(row).join('')}</tbody></table></div></div>
       ${isNew || designer ? '' : `
       <div class="panel"><h3 class="section-title">订单变更记录与联动修正任务</h3>
         ${o.changes.length ? o.changes.map((c) => `<div style="border:1px solid var(--line);border-radius:6px;padding:10px;margin-bottom:10px">
@@ -155,6 +197,7 @@
         <div class="panel"><div class="panel-head"><h3>布产进度</h3>${can('production', 'add') && !o.risk_lock && !['已出货', '已完成'].includes(o.status) ? '<button class="btn small" id="produce">一键布产</button>' : ''}</div>
           ${tableHtml(['布产单', '货号', '计划', '完工', '状态'], o.productions.map((p) => [can('production', 'view') ? `<a href="#/production/${p.id}">${esc(p.prod_no)}</a>` : esc(p.prod_no), esc(p.item_no), p.plan_qty, p.reported, tag(p.status)]))}</div>
       </div>
+      <div class="panel" id="bomPanel"><h3 class="section-title">材料需求（按样品配件/包材明细分解）</h3><div class="muted small">加载中…</div></div>
       <div class="panel"><div class="panel-head"><h3>加减项（模具费、样品费、折扣、佣金扣减等）</h3>${can('order', 'edit') && o.status !== '已完成' ? '<button class="btn small" type="button" id="addCharge">＋ 登记加减项</button>' : ''}</div>
         ${tableHtml(['类型', '费用名称', '金额', '备注', '登记人', '时间', ''], o.charges.map((c) => [c.kind === '减' ? '<span class="tag warn">减</span>' : '<span class="tag ok">加</span>', esc(c.name), money(c.amount), esc(c.remark), esc(c.user_name), esc(c.created_at),
     can('order', 'edit') && o.status !== '已完成' ? `<button class="btn small danger" type="button" data-delc="${c.id}">删除</button>` : '']))}
@@ -170,7 +213,25 @@
   ])}
         <details style="margin-top:8px"><summary class="small">预估成本明细（按货号）</summary>${tableHtml(['货号', '数量', '单位成本¥', '成本来源', '成本¥'], o.estimate.lines.map((l) => [esc(l.item_no), l.qty, money(l.unit_cost), esc(l.source), money(l.cost)]))}</details></div>`}`;
     const tbody = main.querySelector('#items');
-    const bindRm = () => tbody.querySelectorAll('[data-rm]').forEach((b) => { b.onclick = () => b.closest('tr').remove(); });
+    // 包装方案下拉：按货号加载该样品的方案 / package-plan dropdown loaded per sample
+    const planCache = {};
+    const fillPlans = async (tr) => {
+      const sid = tr.querySelector('[data-f="sample_id"]').value;
+      const sel = tr.querySelector('[data-f="package_plan_id"]');
+      if (!sel) return;
+      if (!sid) { sel.innerHTML = '<option value="">（样品默认）</option>'; return; }
+      if (!planCache[sid]) planCache[sid] = get(`/api/e/sample_package?f_sample_id=${sid}&size=50`).then((d) => d.rows).catch(() => []);
+      const plans = await planCache[sid];
+      const curVal = sel.dataset.plan || sel.value;
+      sel.innerHTML = `<option value="">（样品默认）</option>${plans.map((pl) => `<option value="${pl.id}" ${String(pl.id) === String(curVal) ? 'selected' : ''}>${esc(pl.name)}（${pl.outer_qty}只/箱）</option>`).join('')}`;
+    };
+    const bindRm = () => {
+      tbody.querySelectorAll('[data-rm]').forEach((b) => { b.onclick = () => b.closest('tr').remove(); });
+      tbody.querySelectorAll('tr').forEach((tr) => {
+        const ss = tr.querySelector('[data-f="sample_id"]');
+        if (ss && !ss.dataset.planBound) { ss.dataset.planBound = '1'; ss.addEventListener('change', () => { const sel = tr.querySelector('[data-f="package_plan_id"]'); if (sel) sel.dataset.plan = ''; fillPlans(tr); }); fillPlans(tr); }
+      });
+    };
     bindRm();
     const ai = main.querySelector('#addItem');
     if (ai) ai.onclick = () => { tbody.insertAdjacentHTML('beforeend', row({})); bindRm(); };
@@ -233,6 +294,8 @@
           buttons: [{ text: '生成新订单', cls: 'primary', onClick: async (m) => { const r = await post(`/api/orders/${id}/copy`, readForm(m.el)); m.close(); toast(`已生成新订单 ${r.order_no}`, 'ok'); location.hash = '#/order/' + r.id; } }],
         }));
       }
+      const bp = main.querySelector('#bomPanel');
+      if (bp) loadBom(bp, o).catch((e) => { bp.innerHTML = `<div class="alert warn"><span>${esc(e.message)}</span></div>`; });
       const ac = main.querySelector('#addCharge');
       if (ac) {
         ac.onclick = () => modal({
