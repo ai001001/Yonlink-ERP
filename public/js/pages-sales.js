@@ -29,20 +29,26 @@
   route(/^\/quotes$/, async (_, main, qs) => {
     setTitle('报价管理');
     const q = qs.get('q') || '';
-    const status = qs.get('status') || '';
-    const { rows } = await get(`/api/quotes?q=${encodeURIComponent(q)}&status=${encodeURIComponent(status)}`);
-    const st = ['草稿', '待审批', '已审批', '已驳回', '已发客户', '已成交', '已失效'];
-    main.innerHTML = `<div class="panel"><div class="panel-head"><h2>报价单 <span class="muted small">${rows.length} 张</span></h2>
-      <div class="toolbar"><input class="search" id="q" placeholder="单号/客户/货号/新货号" value="${esc(q)}"><select id="st" style="width:120px">${optHtml(st, status)}</select>
-      ${can('quote', 'add') ? '<a class="btn primary" href="#/quote/new">＋ 新建报价</a>' : ''}${can('quote', 'export') ? '<button class="btn" id="exp">导出Excel</button>' : ''}</div></div>
-      ${tableHtml(['报价单号', '客户', '业务员', '币种/术语', '产品数', '金额', '利润率', '有效期', '询价单', '状态'], rows.map((r) => [
-    `<a href="#/quote/${r.id}">${esc(r.quote_no)}</a>`, esc(r.customer_name), esc(r.salesman_name), `${esc(r.currency)} / ${esc(r.term)}`, r.item_count, money(r.amount),
-    `${esc(r.profit_rate)}%`, esc(r.valid_until), r.inquiry_count, tag(r.status)]), new Set([4, 5]))}</div>`;
-    const go = () => { location.hash = `#/quotes?q=${encodeURIComponent(main.querySelector('#q').value)}&status=${encodeURIComponent(main.querySelector('#st').value)}`; };
-    main.querySelector('#q').onkeydown = (e) => { if (e.key === 'Enter') go(); };
-    main.querySelector('#st').onchange = go;
-    const eb = main.querySelector('#exp');
-    if (eb) eb.onclick = () => exportTable('quote', '报价单列表', ['报价单号', '客户', '业务员', '币种', '术语', '金额', '利润率%', '有效期', '状态'], rows.map((r) => [r.quote_no, r.customer_name, r.salesman_name, r.currency, r.term, r.amount, r.profit_rate, r.valid_until, r.status]));
+    const { rows } = await get(`/api/quotes?q=${encodeURIComponent(q)}`);
+    const month = (r) => String(r.created_at || '').slice(0, 7);
+    await ERP.grid(main, {
+      key: 'doc.quotes', title: '报价单', mode: 'client', rows, module: 'quote', q,
+      onKeyword: (kw) => { location.hash = '#/quotes?q=' + encodeURIComponent(kw); },
+      toolbar: can('quote', 'add') ? '<a class="btn primary" href="#/quote/new">＋ 新建报价</a>' : '',
+      columns: [
+        { key: 'quote_no', label: '报价单号', html: (r) => `<a href="#/quote/${r.id}">${esc(r.quote_no)}</a>` },
+        { key: 'customer_name', label: '客户' }, { key: 'salesman_name', label: '业务员' },
+        { key: 'currency', label: '币种' }, { key: 'term', label: '术语' },
+        { key: 'item_count', label: '产品数', num: true }, { key: 'amount', label: '金额', num: true, html: (r) => money(r.amount) },
+        { key: 'profit_rate', label: '利润率%', num: true }, { key: 'valid_until', label: '有效期' },
+        { key: 'inquiry_count', label: '询价单', num: true }, { key: 'status', label: '状态', html: (r) => tag(r.status) },
+        { key: 'created_at', label: '创建时间', text: (r) => String(r.created_at || '').slice(0, 10) },
+      ],
+      defaultCols: ['quote_no', 'customer_name', 'salesman_name', 'currency', 'term', 'item_count', 'amount', 'profit_rate', 'valid_until', 'inquiry_count', 'status'],
+      tree: [{ key: 'salesman_name', label: '业务员' }, { key: 'customer_name', label: '客户' }, { key: 'status', label: '状态' }, { key: 'currency', label: '币种' }, { key: 'term', label: '术语' }, { key: 'month', label: '创建月份', text: month }],
+      schemes: [['salesman_name', 'customer_name'], ['status'], ['month']],
+      quick: [{ key: 'quote_no', label: '报价单号' }, { key: 'customer_name', label: '客户' }, { key: 'salesman_name', label: '业务员' }],
+    });
   });
 
   // ---------- 报价单编辑/详情 / quote editor ----------
@@ -219,18 +225,24 @@
     const f = ['quote_no', 'supplier', 'item_no', 'from', 'to', 'status'];
     const query = f.map((k) => `${k}=${encodeURIComponent(qs.get(k) || '')}`).join('&');
     const { rows } = await get('/api/inquiries?' + query);
-    main.innerHTML = `<div class="panel"><div class="panel-head"><h2>工厂询价台账 <span class="muted small">${rows.length} 张</span></h2>
-      ${can('quote', 'export') ? '<button class="btn" id="exp">导出Excel</button>' : ''}</div>
-      <form class="form-grid" id="flt" style="margin-bottom:12px">
+    const headHtml = `<form class="form-grid" id="flt" style="margin-bottom:12px">
         <label>报价单号<input name="quote_no" value="${esc(qs.get('quote_no'))}"></label><label>厂家<input name="supplier" value="${esc(qs.get('supplier'))}"></label>
         <label>货号<input name="item_no" value="${esc(qs.get('item_no'))}"></label><label>开始日期<input type="date" name="from" value="${esc(qs.get('from'))}"></label>
         <label>结束日期<input type="date" name="to" value="${esc(qs.get('to'))}"></label><label>状态<select name="status">${optHtml(['待发送', '已发送', '已回价'], qs.get('status'))}</select></label>
-        <div style="align-self:end"><button class="btn primary" id="go">查询</button></div></form>
-      ${tableHtml(['询价单号', '报价单号', '厂家', '货号', '状态', '创建', '回价日期', '有效期'], rows.map((r) => [`<a href="#/inquiry/${r.id}">${esc(r.inquiry_no)}</a>`,
-    `<a href="#/quote/${r.quote_id}">${esc(r.quote_no)}</a>`, esc(r.supplier_name), esc(r.item_nos), tag(r.status), esc(String(r.created_at).slice(0, 10)), esc(r.reply_date), esc(r.valid_until)]))}</div>`;
+        <div style="align-self:end"><button class="btn primary" id="go" type="button">查询</button></div></form>`;
+    await ERP.grid(main, {
+      key: 'doc.inquiries', title: '工厂询价台账', mode: 'client', rows, module: 'quote', headHtml,
+      columns: [
+        { key: 'inquiry_no', label: '询价单号', html: (r) => `<a href="#/inquiry/${r.id}">${esc(r.inquiry_no)}</a>` },
+        { key: 'quote_no', label: '报价单号', html: (r) => `<a href="#/quote/${r.quote_id}">${esc(r.quote_no)}</a>` },
+        { key: 'supplier_name', label: '厂家' }, { key: 'item_nos', label: '货号' }, { key: 'status', label: '状态', html: (r) => tag(r.status) },
+        { key: 'created_at', label: '创建', text: (r) => String(r.created_at || '').slice(0, 10) }, { key: 'reply_date', label: '回价日期' }, { key: 'valid_until', label: '有效期' },
+      ],
+      tree: [{ key: 'supplier_name', label: '厂家' }, { key: 'status', label: '状态' }, { key: 'month', label: '创建月份', text: (r) => String(r.created_at || '').slice(0, 7) }],
+      schemes: [['supplier_name', 'status'], ['status'], ['month']],
+      quick: [{ key: 'inquiry_no', label: '询价单号' }, { key: 'quote_no', label: '报价单号' }, { key: 'item_nos', label: '货号' }],
+    });
     main.querySelector('#go').onclick = () => { location.hash = '#/inquiries?' + new URLSearchParams(ERP.readForm(main.querySelector('#flt'))).toString(); };
-    const eb = main.querySelector('#exp');
-    if (eb) eb.onclick = () => exportTable('quote', '工厂询价台账', ['询价单号', '报价单号', '厂家', '货号', '状态', '创建', '回价日期', '有效期'], rows.map((r) => [r.inquiry_no, r.quote_no, r.supplier_name, r.item_nos, r.status, r.created_at, r.reply_date, r.valid_until]));
   });
 
   // ---------- 询价单详情（回填）/ inquiry detail ----------
@@ -295,14 +307,20 @@
     setTitle('送样管理');
     const q = qs.get('q') || '';
     const { rows } = await get('/api/sample-sends?q=' + encodeURIComponent(q));
-    main.innerHTML = `<div class="panel"><div class="panel-head"><h2>送样单 <span class="muted small">${rows.length} 张</span></h2>
-      <div class="toolbar"><input class="search" id="q" placeholder="单号/客户/快递单号/货号" value="${esc(q)}">${can('sendsample', 'add') ? '<a class="btn primary" href="#/send/new">＋ 新建送样</a>' : ''}
-      ${can('sendsample', 'export') ? '<button class="btn" id="exp">导出Excel</button>' : ''}</div></div>
-      ${tableHtml(['送样单号', '客户', '业务员', '货号', '改样新货号', '快递', '送样费¥', '寄出日期', '状态'], rows.map((r) => [`<a href="#/send/${r.id}">${esc(r.send_no)}</a>`, esc(r.customer_name), esc(r.salesman_name),
-    esc(r.item_nos), esc(r.new_item_nos), `${esc(r.express_co)} ${esc(r.tracking_no)}`, money(r.cost), esc(r.send_date), tag(r.status)]))}</div>`;
-    main.querySelector('#q').onkeydown = (e) => { if (e.key === 'Enter') location.hash = '#/sends?q=' + encodeURIComponent(e.target.value); };
-    const eb = main.querySelector('#exp');
-    if (eb) eb.onclick = () => exportTable('sendsample', '送样单列表', ['送样单号', '客户', '货号', '新货号', '快递公司', '快递单号', '送样费', '寄出日期', '状态'], rows.map((r) => [r.send_no, r.customer_name, r.item_nos, r.new_item_nos, r.express_co, r.tracking_no, r.cost, r.send_date, r.status]));
+    await ERP.grid(main, {
+      key: 'doc.sends', title: '送样单', mode: 'client', rows, module: 'sendsample', q,
+      onKeyword: (kw) => { location.hash = '#/sends?q=' + encodeURIComponent(kw); },
+      toolbar: can('sendsample', 'add') ? '<a class="btn primary" href="#/send/new">＋ 新建送样</a>' : '',
+      columns: [
+        { key: 'send_no', label: '送样单号', html: (r) => `<a href="#/send/${r.id}">${esc(r.send_no)}</a>` },
+        { key: 'customer_name', label: '客户' }, { key: 'salesman_name', label: '业务员' }, { key: 'item_nos', label: '货号' }, { key: 'new_item_nos', label: '改样新货号' },
+        { key: 'express_co', label: '快递公司' }, { key: 'tracking_no', label: '快递单号' }, { key: 'cost', label: '送样费¥', num: true, html: (r) => money(r.cost) },
+        { key: 'send_date', label: '寄出日期' }, { key: 'status', label: '状态', html: (r) => tag(r.status) },
+      ],
+      tree: [{ key: 'salesman_name', label: '业务员' }, { key: 'customer_name', label: '客户' }, { key: 'status', label: '状态' }, { key: 'express_co', label: '快递公司' }, { key: 'month', label: '寄出月份', text: (r) => String(r.send_date || '').slice(0, 7) }],
+      schemes: [['salesman_name', 'customer_name'], ['status'], ['month']],
+      quick: [{ key: 'send_no', label: '送样单号' }, { key: 'customer_name', label: '客户' }, { key: 'tracking_no', label: '快递单号' }, { key: 'item_nos', label: '货号' }],
+    });
   });
 
   route(/^\/send\/(new|\d+)$/, async ([id], main) => {

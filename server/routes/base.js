@@ -7,7 +7,7 @@
 const crypto = require('node:crypto');
 const { HttpError } = require('../http');
 const { can, need, log, tx, required, today, num } = require('../core');
-const { ENTITIES, REF_LABEL } = require('../entities');
+const { ENTITIES, REF_LABEL, CHILDREN } = require('../entities');
 const { hashPassword, ACTIONS } = require('../db');
 const { tableXlsx } = require('../xlsx');
 const { DEMO_ACCOUNTS, POLICY_TEXT, passwordProblems, generatePassword, safeEqual, rateLimiter } = require('../security');
@@ -86,15 +86,20 @@ function scopeClause(ctx, scopeDef, alias = '') {
   return { sql, params };
 }
 
+/** 表示“空值”的筛选值 / Filter value standing for "blank" */
+const BLANK = '__BLANK__';
+
 /**
- * 查询实体列表（含引用字段显示名）/ List entity rows with ref labels.
+ * 解析列表筛选条件（数据范围、关键字、导航树、快速查找、自动过滤）
+ * Build the WHERE clause for entity lists: scope, keyword, tree node, quick search and auto filters.
+ * 参数约定 / params: q=关键字, f_字段=精确值(导航树), l_字段=包含(快速查找), in_字段=JSON数组(自动过滤)
  * @param {object} ctx
- * @param {string} key 实体键 / entity key
+ * @param {object} ent 实体定义 / entity definition
  * @param {object} q 查询参数 / query params
- * @returns {{rows:object[], total:number}}
+ * @param {string} [skip] 不参与筛选的字段（用于计算该列的可选值）/ field excluded (when listing its own values)
+ * @returns {{sql:string, params:any[]}}
  */
-function listEntity(ctx, key, q) {
-  const ent = ENTITIES[key];
+function entityWhere(ctx, ent, q, skip) {
   const where = [];
   const params = [];
   const sc = scopeClause(ctx, ent.scope, 't');
@@ -103,26 +108,135 @@ function listEntity(ctx, key, q) {
     where.push('(' + ent.search.map((c) => `t.${c} LIKE ?`).join(' OR ') + ')');
     for (let i = 0; i < ent.search.length; i++) params.push(`%${q.q}%`);
   }
+  const blank = (c) => `(t.${c} IS NULL OR t.${c} = '')`;
   for (const fd of ent.fields) {
-    const v = q['f_' + fd.name];
-    if (v !== undefined && v !== '') { where.push(`t.${fd.name} = ?`); params.push(v); }
+    const c = fd.name;
+    const v = q['f_' + c];
+    if (v !== undefined && v !== '') {
+      if (v === BLANK) where.push(blank(c)); else { where.push(`t.${c} = ?`); params.push(v); }
+    }
+    const like = q['l_' + c];
+    if (like !== undefined && String(like).trim() !== '') {
+      if (fd.type === 'ref') {
+        const r = REF_LABEL[fd.ref];
+        where.push(`t.${c} IN (SELECT ${r.pk || 'id'} FROM ${r.table} WHERE ${r.label} LIKE ?)`);
+      } else where.push(`t.${c} LIKE ?`);
+      params.push(`%${String(like).trim()}%`);
+    }
+    const inv = q['in_' + c];
+    if (inv !== undefined && inv !== '' && c !== skip) {
+      let list;
+      try { list = JSON.parse(inv); } catch { throw new HttpError(400, `筛选条件格式错误：${fd.label}`); }
+      if (!Array.isArray(list) || !list.length) continue;
+      const numeric = fd.type === 'number' || (fd.type === 'ref' && !REF_LABEL[fd.ref].pk);
+      const vals = list.filter((x) => x !== BLANK).slice(0, 500).map((x) => (numeric ? Number(x) : String(x)));
+      const parts = [];
+      if (vals.length) { parts.push(`${numeric ? `t.${c}` : `CAST(t.${c} AS TEXT)`} IN (${vals.map(() => '?').join(',')})`); params.push(...vals); }
+      if (list.includes(BLANK)) parts.push(blank(c));
+      where.push('(' + parts.join(' OR ') + ')');
+    }
   }
-  const refCols = ent.fields.filter((fd) => fd.type === 'ref').map((fd) => {
+  return { sql: where.length ? 'WHERE ' + where.join(' AND ') : '', params };
+}
+
+/**
+ * 引用字段显示名的 SQL 片段 / SQL fragments selecting display labels of ref fields.
+ * @param {object} ent
+ * @returns {string[]}
+ */
+function refCols(ent) {
+  return ent.fields.filter((fd) => fd.type === 'ref').map((fd) => {
     const r = REF_LABEL[fd.ref];
     return `(SELECT ${r.label} FROM ${r.table} x WHERE x.${r.pk || 'id'} = t.${fd.name}) AS ${fd.name}_label`;
   });
+}
+
+/**
+ * 查询实体列表（含引用字段显示名，支持排序）/ List entity rows with ref labels and optional sorting.
+ * @param {object} ctx
+ * @param {string} key 实体键 / entity key
+ * @param {object} q 查询参数 / query params (sort, dir, page, size + filters)
+ * @returns {{rows:object[], total:number}}
+ */
+function listEntity(ctx, key, q) {
+  const ent = ENTITIES[key];
+  const { sql: w, params } = entityWhere(ctx, ent, q);
+  const rc = refCols(ent);
   const pk = ent.pk || 'id';
-  const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const total = ctx.db.prepare(`SELECT COUNT(*) c FROM ${ent.table} t ${w}`).get(...params).c;
   const size = Math.min(500, Math.max(1, parseInt(q.size || '50', 10)));
   const page = Math.max(1, parseInt(q.page || '1', 10));
-  const order = ent.order ? ent.order.replace(/(\w+)/, 't.$1') : `t.${pk}`;
-  const rows = ctx.db.prepare(`SELECT t.*${pk === 'id' ? '' : `, t.${pk} AS id`}${refCols.length ? ', ' + refCols.join(', ') : ''} FROM ${ent.table} t ${w} ORDER BY ${order} LIMIT ? OFFSET ?`)
+  let order = ent.order ? ent.order.replace(/(\w+)/, 't.$1') : `t.${pk}`;
+  const sf = q.sort && ent.fields.find((fd) => fd.name === q.sort);
+  if (sf) {
+    const dir = q.dir === 'desc' ? 'DESC' : 'ASC';
+    const expr = sf.type === 'ref' ? `${sf.name}_label` : `t.${sf.name}`;
+    // 空值排在最后 / blanks last
+    order = `(${expr} IS NULL OR ${expr} = '') ASC, ${expr} ${dir}, t.${pk} ${dir}`;
+  }
+  const rows = ctx.db.prepare(`SELECT t.*${pk === 'id' ? '' : `, t.${pk} AS id`}${rc.length ? ', ' + rc.join(', ') : ''} FROM ${ent.table} t ${w} ORDER BY ${order} LIMIT ? OFFSET ?`)
     .all(...params, size, (page - 1) * size);
   if (key === 'inventory') {
     for (const r of rows) r.alert = r.qty < r.safety_qty ? '缺料预警' : (r.max_qty > 0 && r.qty > r.max_qty ? '积压预警' : '正常');
   }
   return { rows, total };
+}
+
+/**
+ * 校验字段名属于实体 / Validate that field names belong to the entity.
+ * @param {object} ent
+ * @param {string[]} names
+ * @returns {object[]} 字段定义 / field definitions
+ */
+function fieldsOf(ent, names) {
+  return names.map((n) => {
+    const fd = ent.fields.find((x) => x.name === n);
+    if (!fd || fd.type === 'textarea') throw new HttpError(400, `不能按该字段分组/筛选：${n}`);
+    return fd;
+  });
+}
+
+/**
+ * 导航树分组计数（最多3级）/ Group counts for the navigation tree (up to 3 levels).
+ * @param {object} ctx
+ * @param {string} key
+ * @param {object} q 查询参数，by=字段1,字段2 / query with by=field list
+ * @returns {{groups:{v:any[], l:string[], n:number}[], total:number}}
+ */
+function groupEntity(ctx, key, q) {
+  const ent = ENTITIES[key];
+  const by = String(q.by || '').split(',').filter(Boolean).slice(0, 3);
+  if (!by.length) throw new HttpError(400, '请指定分组字段');
+  const fds = fieldsOf(ent, by);
+  const { sql: w, params } = entityWhere(ctx, ent, q);
+  const sel = fds.map((fd, i) => {
+    const lab = fd.type === 'ref' ? `(SELECT ${REF_LABEL[fd.ref].label} FROM ${REF_LABEL[fd.ref].table} x WHERE x.${REF_LABEL[fd.ref].pk || 'id'} = t.${fd.name})` : `t.${fd.name}`;
+    return `t.${fd.name} AS v${i}, ${lab} AS l${i}`;
+  }).join(', ');
+  const grp = fds.map((_, i) => `v${i}`).join(', ');
+  const rows = ctx.db.prepare(`SELECT ${sel}, COUNT(*) n FROM ${ent.table} t ${w} GROUP BY ${grp} ORDER BY ${fds.map((_, i) => `(l${i} IS NULL OR l${i}='') ASC, l${i}`).join(', ')} LIMIT 5000`).all(...params);
+  const groups = rows.map((r) => ({
+    v: fds.map((_, i) => (r[`v${i}`] === null || r[`v${i}`] === '' ? BLANK : r[`v${i}`])),
+    l: fds.map((_, i) => (r[`l${i}`] === null || r[`l${i}`] === '' ? '(空)' : String(r[`l${i}`]))),
+    n: r.n,
+  }));
+  return { groups, total: groups.reduce((a, g) => a + g.n, 0) };
+}
+
+/**
+ * 某列的可选值（自动过滤下拉）/ Distinct values of one column for the auto-filter dropdown.
+ * @param {object} ctx
+ * @param {string} key
+ * @param {object} q 查询参数，field=字段 / query with field
+ * @returns {{v:any, l:string, n:number}[]}
+ */
+function distinctEntity(ctx, key, q) {
+  const ent = ENTITIES[key];
+  const [fd] = fieldsOf(ent, [String(q.field || '')]);
+  const { sql: w, params } = entityWhere(ctx, ent, q, fd.name);
+  const lab = fd.type === 'ref' ? `(SELECT ${REF_LABEL[fd.ref].label} FROM ${REF_LABEL[fd.ref].table} x WHERE x.${REF_LABEL[fd.ref].pk || 'id'} = t.${fd.name})` : `t.${fd.name}`;
+  return ctx.db.prepare(`SELECT t.${fd.name} v, ${lab} l, COUNT(*) n FROM ${ent.table} t ${w} GROUP BY t.${fd.name} ORDER BY (l IS NULL OR l='') ASC, l LIMIT 500`).all(...params)
+    .map((r) => ({ v: r.v === null || r.v === '' ? BLANK : r.v, l: r.l === null || r.l === '' ? '(空)' : String(r.l), n: r.n }));
 }
 
 /**
@@ -150,6 +264,13 @@ function getEntity(ctx, key, id) {
  */
 function beforeSave(ctx, key, data, old) {
   const { db } = ctx;
+  const ent = ENTITIES[key];
+  if (ent.parent || key === 'customer_follow') {
+    // 只能给自己有权查看的客户添加/修改子记录 / children may only be attached to a visible parent
+    const pf = ent.parent ? ent.parent.field : 'customer_id';
+    const pid = data[pf] !== undefined ? data[pf] : old && old[pf];
+    if (pid !== undefined && pid !== null) getEntity(ctx, ent.parent ? ent.parent.entity : 'customer', pid);
+  }
   if (['agency_record', 'customer_follow', 'sample_revision'].includes(key) && !old) data.user_name = ctx.user.name;
   if (key === 'customer' && ctx.user.scope === 'own' && !old) data.salesman_id = ctx.user.employee_id;
   if (key === 'mail' && !data.customer_id) {
@@ -157,6 +278,16 @@ function beforeSave(ctx, key, data, old) {
     const addr = [data.mail_from, data.mail_to].filter(Boolean).map((s) => String(s).toLowerCase().trim());
     const c = addr.length && db.prepare(`SELECT id FROM customers WHERE lower(email) IN (${addr.map(() => '?').join(',')}) LIMIT 1`).get(...addr);
     if (c) data.customer_id = c.id;
+  }
+  if (key === 'customer_contact' && (data.is_main ?? (old && old.is_main)) === '是') {
+    // 主联系人同步到客户档案 / sync the main contact back to the customer record
+    const cid = data.customer_id ?? old.customer_id;
+    const merged = { ...(old || {}), ...data };
+    db.prepare("UPDATE customer_contacts SET is_main='否' WHERE customer_id=? AND id<>?").run(cid, old ? old.id : -1);
+    db.prepare('UPDATE customers SET contact=?, email=COALESCE(?, email), phone=COALESCE(?, phone) WHERE id=?').run(merged.name, merged.email || null, merged.phone || null, cid);
+  }
+  if (key === 'customer_mark' && (data.is_default ?? (old && old.is_default)) === '是') {
+    db.prepare("UPDATE customer_marks SET is_default='否' WHERE customer_id=? AND id<>?").run(data.customer_id ?? old.customer_id, old ? old.id : -1);
   }
   if (key === 'currency' && old && num(old.rate) !== num(data.rate)) {
     db.prepare('INSERT INTO rate_history(code,old_rate,new_rate,user_name) VALUES(?,?,?,?)').run(old.code, old.rate, data.rate, ctx.user.name);
@@ -354,7 +485,7 @@ function register(r) {
     const modules = ctx.db.prepare('SELECT * FROM modules ORDER BY sort').all();
     const entities = {};
     for (const [k, e] of Object.entries(ENTITIES)) {
-      if (can(u, e.module, 'view')) entities[k] = { key: k, module: e.module, title: e.title, fields: e.fields, readonly: !!e.readonly, pk: e.pk || 'id' };
+      if (can(u, e.module, 'view')) entities[k] = { key: k, module: e.module, title: e.title, fields: e.fields, readonly: !!e.readonly, pk: e.pk || 'id', tree: e.tree || [], schemes: e.schemes || [], quick: e.quick || e.search || [], child: !!e.child };
     }
     return {
       user: { id: u.id, username: u.username, name: u.name, role_code: u.role_code, role_name: u.role_name, scope: u.scope, employee_id: u.employee_id, must_change: u.must_change },
@@ -371,6 +502,33 @@ function register(r) {
     if (!e) throw new HttpError(404, '未知数据类型');
     return e;
   };
+  // 导航树分组计数、自动过滤可选值 / tree group counts and auto-filter values
+  r.get('/api/e-groups/:entity', (ctx) => {
+    const e = entOf(ctx.params.entity);
+    need(ctx, e.module, 'view');
+    return groupEntity(ctx, ctx.params.entity, ctx.query);
+  });
+  r.get('/api/e-values/:entity', (ctx) => {
+    const e = entOf(ctx.params.entity);
+    need(ctx, e.module, 'view');
+    return distinctEntity(ctx, ctx.params.entity, ctx.query);
+  });
+
+  // 个人界面设置（导航方案、列设置、排序），按账号保存 / per-user UI preferences
+  r.get('/api/prefs/:key', (ctx) => {
+    if (!/^[\w.-]{1,60}$/.test(ctx.params.key)) throw new HttpError(400, '设置项名称无效');
+    const row = ctx.db.prepare('SELECT value FROM user_prefs WHERE user_id=? AND pkey=?').get(ctx.user.id, ctx.params.key);
+    return { value: row ? JSON.parse(row.value) : null };
+  });
+  r.put('/api/prefs/:key', (ctx) => {
+    if (!/^[\w.-]{1,60}$/.test(ctx.params.key)) throw new HttpError(400, '设置项名称无效');
+    const json = JSON.stringify(ctx.body.value ?? null);
+    if (json.length > 20000) throw new HttpError(400, '设置内容过大');
+    ctx.db.prepare(`INSERT INTO user_prefs(user_id,pkey,value,updated_at) VALUES(?,?,?,datetime('now','localtime'))
+      ON CONFLICT(user_id,pkey) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`).run(ctx.user.id, ctx.params.key, json);
+    return { ok: true };
+  });
+
   r.get('/api/e/:entity', (ctx) => {
     const e = entOf(ctx.params.entity);
     need(ctx, e.module, 'view');
@@ -394,14 +552,18 @@ function register(r) {
   r.del('/api/e/:entity/:id', (ctx) => {
     const key = ctx.params.entity;
     const e = entOf(key);
-    need(ctx, e.module, 'delete');
+    // 客户页签子记录（联系人等）随客户维护，有修改权限即可删除 / child rows are maintained with edit permission
+    need(ctx, e.module, e.child ? 'edit' : 'delete');
     if (e.readonly) throw new HttpError(400, '只读台账不允许删除');
     getEntity(ctx, key, ctx.params.id);
     for (const [t, c, label] of DELETE_GUARDS[key] || []) {
       const n = ctx.db.prepare(`SELECT COUNT(*) c FROM ${t} WHERE ${c}=?`).get(ctx.params.id).c;
       if (n) throw new HttpError(409, `该${e.title}已被${n}条${label}引用，不能删除（可改为停用/离职状态）`);
     }
-    ctx.db.prepare(`DELETE FROM ${e.table} WHERE ${e.pk || 'id'}=?`).run(ctx.params.id);
+    tx(ctx.db, () => {
+      for (const [t, c] of CHILDREN[key] || []) ctx.db.prepare(`DELETE FROM ${t} WHERE ${c}=?`).run(ctx.params.id);
+      ctx.db.prepare(`DELETE FROM ${e.table} WHERE ${e.pk || 'id'}=?`).run(ctx.params.id);
+    });
     log(ctx, e.module, `删除${e.title}`, ctx.params.id);
     return { ok: true };
   });
@@ -655,4 +817,4 @@ function saveRole(ctx, id) {
   }
 }
 
-module.exports = { register, loadUser, scopeClause, listEntity, assertPasswordFresh };
+module.exports = { register, loadUser, scopeClause, listEntity, getEntity, assertPasswordFresh, BLANK };

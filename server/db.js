@@ -127,6 +127,12 @@ CREATE TABLE IF NOT EXISTS mail_accounts (id INTEGER PRIMARY KEY, email TEXT UNI
   uidvalidity INTEGER, last_uid INTEGER DEFAULT 0, last_fetch_at TEXT, last_error TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
 CREATE TABLE IF NOT EXISTS files (id INTEGER PRIMARY KEY, name TEXT, mime TEXT, size INTEGER, data BLOB, owner_type TEXT, owner_id INTEGER, created_by TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
 
+CREATE TABLE IF NOT EXISTS customer_contacts (id INTEGER PRIMARY KEY, customer_id INTEGER, name TEXT, title TEXT, email TEXT, phone TEXT, mobile TEXT, im TEXT, birthday TEXT, hobby TEXT, is_main TEXT DEFAULT '否', remark TEXT);
+CREATE TABLE IF NOT EXISTS customer_marks (id INTEGER PRIMARY KEY, customer_id INTEGER, name TEXT, front_mark TEXT, side_mark TEXT, inner_mark TEXT, is_default TEXT DEFAULT '否', remark TEXT);
+CREATE TABLE IF NOT EXISTS customer_forwarders (id INTEGER PRIMARY KEY, customer_id INTEGER, agency_id INTEGER, name TEXT, contact TEXT, phone TEXT, email TEXT, port TEXT, remark TEXT);
+CREATE TABLE IF NOT EXISTS customer_banks (id INTEGER PRIMARY KEY, customer_id INTEGER, bank_name TEXT, account_name TEXT, account_no TEXT, swift TEXT, currency TEXT, bank_address TEXT, remark TEXT);
+CREATE TABLE IF NOT EXISTS user_prefs (user_id INTEGER, pkey TEXT, value TEXT, updated_at TEXT DEFAULT (datetime('now','localtime')), PRIMARY KEY (user_id, pkey));
+CREATE TABLE IF NOT EXISTS handovers (id INTEGER PRIMARY KEY, from_emp_id INTEGER, to_emp_id INTEGER, from_name TEXT, to_name TEXT, scopes TEXT, counts TEXT, reason TEXT, user_name TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
 CREATE TABLE IF NOT EXISTS import_batches (id INTEGER PRIMARY KEY, batch_no TEXT UNIQUE, entity TEXT, source TEXT DEFAULT '亿星', file_name TEXT, mode TEXT, total INTEGER DEFAULT 0,
   created INTEGER DEFAULT 0, updated INTEGER DEFAULT 0, skipped INTEGER DEFAULT 0, failed INTEGER DEFAULT 0, status TEXT DEFAULT '已导入', result TEXT, user_name TEXT,
   created_at TEXT DEFAULT (datetime('now','localtime')), rolled_back_at TEXT);

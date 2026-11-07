@@ -27,20 +27,25 @@
   route(/^\/orders$/, async (_, main, qs) => {
     setTitle('订单管理');
     const q = qs.get('q') || '';
-    const status = qs.get('status') || '';
-    const { rows } = await get(`/api/orders?q=${encodeURIComponent(q)}&status=${encodeURIComponent(status)}`);
-    const st = ['待确认', '生产中', '待出货', '部分出货', '已出货', '已完成'];
-    main.innerHTML = `<div class="panel"><div class="panel-head"><h2>销售订单 <span class="muted small">${rows.length} 张</span></h2>
-      <div class="toolbar"><input class="search" id="q" placeholder="订单号/客户/货号" value="${esc(q)}"><select id="st" style="width:120px">${optHtml(st, status)}</select>
-      ${can('order', 'add') ? '<a class="btn primary" href="#/order/new">＋ 新建订单</a>' : ''}${can('order', 'export') ? '<button class="btn" id="exp">导出Excel</button>' : ''}</div></div>
-      ${tableHtml(['订单号', '客户', '国别', '业务员', '货号', '金额', '下单日期', '交期', '风控', '状态'], rows.map((r) => [`<a href="#/order/${r.id}">${esc(r.order_no)}</a>`, esc(r.customer_name), esc(r.country),
-    esc(r.salesman_name), esc(r.item_nos), `${money(r.amount)} ${esc(r.currency)}`, esc(r.order_date), esc(r.delivery_date),
-    r.risk_lock ? `<span class="tag danger">锁定·待办${r.pending_tasks}</span>` : '', tag(r.status)]))}</div>`;
-    const go = () => { location.hash = `#/orders?q=${encodeURIComponent(main.querySelector('#q').value)}&status=${encodeURIComponent(main.querySelector('#st').value)}`; };
-    main.querySelector('#q').onkeydown = (e) => { if (e.key === 'Enter') go(); };
-    main.querySelector('#st').onchange = go;
-    const eb = main.querySelector('#exp');
-    if (eb) eb.onclick = () => exportTable('order', '订单列表', ['订单号', '客户', '国别', '业务员', '货号', '金额', '币种', '下单日期', '交期', '状态'], rows.map((r) => [r.order_no, r.customer_name, r.country, r.salesman_name, r.item_nos, r.amount, r.currency, r.order_date, r.delivery_date, r.status]));
+    const { rows } = await get(`/api/orders?q=${encodeURIComponent(q)}`);
+    await ERP.grid(main, {
+      key: 'doc.orders', title: '销售订单', mode: 'client', rows, module: 'order', q,
+      onKeyword: (kw) => { location.hash = '#/orders?q=' + encodeURIComponent(kw); },
+      toolbar: can('order', 'add') ? '<a class="btn primary" href="#/order/new">＋ 新建订单</a>' : '',
+      columns: [
+        { key: 'order_no', label: '订单号', html: (r) => `<a href="#/order/${r.id}">${esc(r.order_no)}</a>` },
+        { key: 'customer_name', label: '客户' }, { key: 'country', label: '国别' }, { key: 'salesman_name', label: '业务员' }, { key: 'item_nos', label: '货号' },
+        { key: 'amount', label: '金额', num: true, html: (r) => `${money(r.amount)} ${esc(r.currency)}` }, { key: 'currency', label: '币种' }, { key: 'term', label: '术语' },
+        { key: 'order_date', label: '下单日期' }, { key: 'delivery_date', label: '交期' },
+        { key: 'risk', label: '风控', text: (r) => (r.risk_lock ? '锁定' : ''), html: (r) => (r.risk_lock ? `<span class="tag danger">锁定·待办${r.pending_tasks}</span>` : '') },
+        { key: 'status', label: '状态', html: (r) => tag(r.status) },
+      ],
+      defaultCols: ['order_no', 'customer_name', 'country', 'salesman_name', 'item_nos', 'amount', 'order_date', 'delivery_date', 'risk', 'status'],
+      tree: [{ key: 'salesman_name', label: '业务员' }, { key: 'customer_name', label: '客户' }, { key: 'country', label: '国别' }, { key: 'status', label: '状态' },
+        { key: 'currency', label: '币种' }, { key: 'month', label: '下单月份', text: (r) => String(r.order_date || '').slice(0, 7) }, { key: 'risk', label: '风控', text: (r) => (r.risk_lock ? '锁定' : '正常') }],
+      schemes: [['salesman_name', 'customer_name'], ['status'], ['country', 'customer_name'], ['month']],
+      quick: [{ key: 'order_no', label: '订单号' }, { key: 'customer_name', label: '客户' }, { key: 'item_nos', label: '货号' }, { key: 'salesman_name', label: '业务员' }],
+    });
   });
 
   /**
@@ -236,24 +241,42 @@
   route(/^\/shipments$/, async (_, main) => {
     setTitle('出货台账');
     const { rows } = await get('/api/shipments');
-    main.innerHTML = `<div class="panel"><div class="panel-head"><h2>出货台账（报关/海运）</h2>${can('order', 'export') ? '<button class="btn" id="exp">导出Excel</button>' : ''}</div>
-      ${tableHtml(['出货单', '订单', '客户', '国别', '出货日期', '港口', '货代', '柜号', '报关单号', '数量', 'CBM', '验货', '状态'], rows.map((s) => [esc(s.ship_no), `<a href="#/order/${s.order_id}">${esc(s.order_no)}</a>`, esc(s.customer_name), esc(s.country),
-    esc(s.ship_date), `${esc(s.port)}→${esc(s.dest_port)}`, esc(s.forwarder_name), esc(s.container_no), esc(s.customs_no), s.qty, s.cbm, tag(s.inspection_status), tag(s.status)]))}</div>`;
-    const eb = main.querySelector('#exp');
-    if (eb) eb.onclick = () => exportTable('order', '出货台账', ['出货单', '订单', '客户', '国别', '出货日期', '起运港', '目的港', '柜号', '报关单号', '数量', 'CBM', '验货', '状态'], rows.map((s) => [s.ship_no, s.order_no, s.customer_name, s.country, s.ship_date, s.port, s.dest_port, s.container_no, s.customs_no, s.qty, s.cbm, s.inspection_status, s.status]));
+    await ERP.grid(main, {
+      key: 'doc.shipments', title: '出货台账（报关/海运）', mode: 'client', rows, module: 'order',
+      columns: [
+        { key: 'ship_no', label: '出货单' }, { key: 'order_no', label: '订单', html: (s) => `<a href="#/order/${s.order_id}">${esc(s.order_no)}</a>` },
+        { key: 'customer_name', label: '客户' }, { key: 'country', label: '国别' }, { key: 'ship_date', label: '出货日期' },
+        { key: 'port', label: '港口', text: (s) => `${s.port || ''}→${s.dest_port || ''}` }, { key: 'forwarder_name', label: '货代' }, { key: 'container_no', label: '柜号' },
+        { key: 'customs_no', label: '报关单号' }, { key: 'qty', label: '数量', num: true }, { key: 'cbm', label: 'CBM', num: true },
+        { key: 'inspection_status', label: '验货', html: (s) => tag(s.inspection_status) }, { key: 'status', label: '状态', html: (s) => tag(s.status) },
+      ],
+      tree: [{ key: 'customer_name', label: '客户' }, { key: 'country', label: '国别' }, { key: 'status', label: '状态' }, { key: 'inspection_status', label: '验货' },
+        { key: 'forwarder_name', label: '货代' }, { key: 'month', label: '出货月份', text: (s) => String(s.ship_date || '').slice(0, 7) }],
+      schemes: [['customer_name'], ['status'], ['month'], ['inspection_status']],
+      quick: [{ key: 'ship_no', label: '出货单' }, { key: 'order_no', label: '订单' }, { key: 'container_no', label: '柜号' }, { key: 'customs_no', label: '报关单号' }],
+    });
   });
 
   // ---------- 应收与开票 / receivables ----------
   route(/^\/receivables$/, async (_, main) => {
     setTitle('订单应收款与应开票');
     const { rows } = await get('/api/receivables');
-    main.innerHTML = `<div class="panel"><div class="panel-head"><h2>应收与开票台账</h2>${can('receivable', 'export') ? '<button class="btn" id="exp">导出Excel</button>' : ''}</div>
-      ${tableHtml(['订单', '客户', '币种', '应收', '实收', '未收', '汇兑损益¥', '已开票', '未开票', '收款状态', '开票提醒', ''], rows.map((r) => [`<a href="#/receivable/${r.id}">${esc(r.order_no)}</a>`, esc(r.customer_name), esc(r.currency),
-    money(r.amount), money(r.received), money(r.unreceived), money(r.fx_gain), money(r.invoiced), money(r.uninvoiced), tag(r.receive_status),
-    r.invoice_overdue ? `<span class="tag danger">逾期${r.overdue_days}天</span>` : (r.first_ship_date && r.uninvoiced > 0 ? '<span class="tag warn">待开票</span>' : ''),
-    `<a class="btn small" href="#/receivable/${r.id}">收款/开票</a>`]), new Set([3, 4, 5, 6, 7, 8]))}</div>`;
-    const eb = main.querySelector('#exp');
-    if (eb) eb.onclick = () => exportTable('receivable', '应收与开票台账', ['订单', '客户', '币种', '应收', '实收', '未收', '汇兑损益', '已开票', '未开票', '收款状态', '开票逾期天数'], rows.map((r) => [r.order_no, r.customer_name, r.currency, r.amount, r.received, r.unreceived, r.fx_gain, r.invoiced, r.uninvoiced, r.receive_status, r.invoice_overdue ? r.overdue_days : '']));
+    const remind = (r) => (r.invoice_overdue ? `逾期${r.overdue_days}天` : (r.first_ship_date && r.uninvoiced > 0 ? '待开票' : ''));
+    await ERP.grid(main, {
+      key: 'doc.receivables', title: '应收与开票台账', mode: 'client', rows, module: 'receivable',
+      columns: [
+        { key: 'order_no', label: '订单', html: (r) => `<a href="#/receivable/${r.id}">${esc(r.order_no)}</a>` }, { key: 'customer_name', label: '客户' }, { key: 'currency', label: '币种' },
+        { key: 'amount', label: '应收', num: true, html: (r) => money(r.amount) }, { key: 'received', label: '实收', num: true, html: (r) => money(r.received) },
+        { key: 'unreceived', label: '未收', num: true, html: (r) => money(r.unreceived) }, { key: 'fx_gain', label: '汇兑损益¥', num: true, html: (r) => money(r.fx_gain) },
+        { key: 'invoiced', label: '已开票', num: true, html: (r) => money(r.invoiced) }, { key: 'uninvoiced', label: '未开票', num: true, html: (r) => money(r.uninvoiced) },
+        { key: 'receive_status', label: '收款状态', html: (r) => tag(r.receive_status) },
+        { key: 'remind', label: '开票提醒', text: remind, html: (r) => (r.invoice_overdue ? `<span class="tag danger">逾期${r.overdue_days}天</span>` : (remind(r) ? '<span class="tag warn">待开票</span>' : '')) },
+      ],
+      tree: [{ key: 'customer_name', label: '客户' }, { key: 'currency', label: '币种' }, { key: 'receive_status', label: '收款状态' }, { key: 'remind_type', label: '开票提醒', text: (r) => (r.invoice_overdue ? '开票逾期' : remind(r) || '无') }],
+      schemes: [['receive_status', 'customer_name'], ['customer_name'], ['remind_type']],
+      quick: [{ key: 'order_no', label: '订单' }, { key: 'customer_name', label: '客户' }],
+      actions: (r) => `<a class="btn small" href="#/receivable/${r.id}">收款/开票</a>`,
+    });
   });
   route(/^\/receivable\/(\d+)$/, async ([id], main) => {
     const r = await get('/api/receivables/' + id);
@@ -287,13 +310,23 @@
     setTitle('采购管理');
     const q = qs.get('q') || '';
     const { rows } = await get('/api/purchases?q=' + encodeURIComponent(q));
-    main.innerHTML = `<div class="panel"><div class="panel-head"><h2>采购单（原辅材料/外购成品）</h2><div class="toolbar"><input class="search" id="q" placeholder="单号/供应商/订单号" value="${esc(q)}">
-      ${can('purchase', 'add') ? '<a class="btn primary" href="#/purchase/new">＋ 新建采购</a>' : ''}${can('purchase', 'export') ? '<button class="btn" id="exp">导出Excel</button>' : ''}</div></div>
-      ${tableHtml(['采购单', '类型', '供应商', '关联订单', '金额¥', '已付¥', '已收票¥', '交货期', '质检', '状态'], rows.map((p) => [`<a href="#/purchase/${p.id}">${esc(p.po_no)}</a>`, esc(p.type), esc(p.supplier_name),
-    p.order_no ? `<a href="#/order/${p.order_id}">${esc(p.order_no)}</a>` : '-', money(p.amount), money(p.paid), money(p.invoiced), esc(p.due_date), tag(p.qc_status), tag(p.status)]), new Set([4, 5, 6]))}</div>`;
-    main.querySelector('#q').onkeydown = (e) => { if (e.key === 'Enter') location.hash = '#/purchases?q=' + encodeURIComponent(e.target.value); };
-    const eb = main.querySelector('#exp');
-    if (eb) eb.onclick = () => exportTable('purchase', '采购单列表', ['采购单', '类型', '供应商', '关联订单', '金额', '已付', '已收票', '交货期', '质检', '状态'], rows.map((p) => [p.po_no, p.type, p.supplier_name, p.order_no, p.amount, p.paid, p.invoiced, p.due_date, p.qc_status, p.status]));
+    await ERP.grid(main, {
+      key: 'doc.purchases', title: '采购单（原辅材料/外购成品）', mode: 'client', rows, module: 'purchase', q,
+      onKeyword: (kw) => { location.hash = '#/purchases?q=' + encodeURIComponent(kw); },
+      toolbar: can('purchase', 'add') ? '<a class="btn primary" href="#/purchase/new">＋ 新建采购</a>' : '',
+      columns: [
+        { key: 'po_no', label: '采购单', html: (p) => `<a href="#/purchase/${p.id}">${esc(p.po_no)}</a>` }, { key: 'type', label: '类型' }, { key: 'supplier_name', label: '供应商' },
+        { key: 'order_no', label: '关联订单', html: (p) => (p.order_no ? `<a href="#/order/${p.order_id}">${esc(p.order_no)}</a>` : '-') },
+        { key: 'amount', label: '金额¥', num: true, html: (p) => money(p.amount) }, { key: 'paid', label: '已付¥', num: true, html: (p) => money(p.paid) },
+        { key: 'invoiced', label: '已收票¥', num: true, html: (p) => money(p.invoiced) }, { key: 'order_date', label: '下单日期' }, { key: 'due_date', label: '交货期' },
+        { key: 'qc_status', label: '质检', html: (p) => tag(p.qc_status) }, { key: 'status', label: '状态', html: (p) => tag(p.status) },
+      ],
+      defaultCols: ['po_no', 'type', 'supplier_name', 'order_no', 'amount', 'paid', 'invoiced', 'due_date', 'qc_status', 'status'],
+      tree: [{ key: 'supplier_name', label: '供应商' }, { key: 'type', label: '类型' }, { key: 'status', label: '状态' }, { key: 'qc_status', label: '质检' },
+        { key: 'month', label: '下单月份', text: (p) => String(p.order_date || p.created_at || '').slice(0, 7) }],
+      schemes: [['supplier_name'], ['type', 'status'], ['qc_status'], ['month']],
+      quick: [{ key: 'po_no', label: '采购单' }, { key: 'supplier_name', label: '供应商' }, { key: 'order_no', label: '关联订单' }],
+    });
   });
   route(/^\/purchase\/(new|\d+)$/, async ([id], main, qs) => {
     const isNew = id === 'new';
@@ -367,23 +400,41 @@
   route(/^\/payables$/, async (_, main) => {
     setTitle('供应商应付与进项票');
     const { rows } = await get('/api/payables');
-    main.innerHTML = `<div class="panel"><div class="panel-head"><h2>供应商应付与进项开票台账</h2>${can('purchase', 'export') ? '<button class="btn" id="exp">导出Excel</button>' : ''}</div>
-      ${tableHtml(['供应商', '类型', '结算方式', '应付¥', '已付¥', '未付¥', '已收票¥', '已核销¥', '未开票¥'], rows.map((r) => [esc(r.name), esc(r.type), esc(r.settlement), money(r.amount), money(r.paid), money(r.unpaid), money(r.invoiced), money(r.verified), money(r.uninvoiced)]), new Set([3, 4, 5, 6, 7, 8]))}</div>`;
-    const eb = main.querySelector('#exp');
-    if (eb) eb.onclick = () => exportTable('purchase', '供应商应付台账', ['供应商', '类型', '结算方式', '应付', '已付', '未付', '已收票', '已核销', '未开票'], rows.map((r) => [r.name, r.type, r.settlement, r.amount, r.paid, r.unpaid, r.invoiced, r.verified, r.uninvoiced]));
+    await ERP.grid(main, {
+      key: 'doc.payables', title: '供应商应付与进项开票台账', mode: 'client', rows, module: 'purchase',
+      columns: [
+        { key: 'name', label: '供应商' }, { key: 'type', label: '类型' }, { key: 'settlement', label: '结算方式' },
+        ...[['amount', '应付¥'], ['paid', '已付¥'], ['unpaid', '未付¥'], ['invoiced', '已收票¥'], ['verified', '已核销¥'], ['uninvoiced', '未开票¥']].map(([k, l]) => ({ key: k, label: l, num: true, html: (r) => money(r[k]) })),
+      ],
+      tree: [{ key: 'type', label: '类型' }, { key: 'settlement', label: '结算方式' }, { key: 'pay_state', label: '付款情况', text: (r) => (Number(r.unpaid) > 0 ? '有未付' : '已付清') }],
+      schemes: [['type'], ['pay_state'], ['settlement']],
+      quick: [{ key: 'name', label: '供应商' }],
+    });
   });
 
   // ---------- 生产 / production ----------
   route(/^\/production$/, async (_, main) => {
     setTitle('生产布产进度');
     const { rows, processes } = await get('/api/productions');
-    main.innerHTML = `<div class="panel"><div class="panel-head"><h2>布产进度看板</h2><div class="toolbar"><span class="muted small">在订单详情页点击「一键布产」生成布产单</span>${can('production', 'export') ? '<button class="btn" id="exp">导出Excel</button>' : ''}</div></div>
-      ${tableHtml(['布产单', '订单', '客户', '货号', '计划', ...processes.map((p) => p + '良品'), '完工率', '不良率', '计划完工', '状态', ''], rows.map((p) => [`<a href="#/production/${p.id}">${esc(p.prod_no)}</a>`, `<a href="#/order/${p.order_id}">${esc(p.order_no)}</a>`, esc(p.customer_name), esc(p.item_no), p.plan_qty,
-    ...processes.map((k) => p.process[k].good || 0), `<div class="progress" title="${p.completion}%"><i style="width:${Math.min(100, p.completion)}%"></i></div><span class="small">${p.completion}%</span>`, `${p.bad_rate}%`,
-    esc(p.due_date) + (p.delayed ? ' <span class="tag danger">延期</span>' : ''), tag(p.status), can('production', 'edit') && p.status !== '已完工' ? `<button class="btn small primary" data-rep="${p.id}">报工</button>` : '']))}</div>`;
-    const eb = main.querySelector('#exp');
-    if (eb) eb.onclick = () => exportTable('production', '布产进度', ['布产单', '订单', '货号', '计划', ...processes, '完工率%', '不良率%', '计划完工', '状态'], rows.map((p) => [p.prod_no, p.order_no, p.item_no, p.plan_qty, ...processes.map((k) => p.process[k].good || 0), p.completion, p.bad_rate, p.due_date, p.status]));
-    main.querySelectorAll('[data-rep]').forEach((b) => { b.onclick = () => reportModal(b.dataset.rep, processes); });
+    await ERP.grid(main, {
+      key: 'doc.production', title: '布产进度看板', mode: 'client', rows, module: 'production',
+      toolbar: '<span class="muted small">在订单详情页点击「一键布产」生成布产单</span>',
+      columns: [
+        { key: 'prod_no', label: '布产单', html: (p) => `<a href="#/production/${p.id}">${esc(p.prod_no)}</a>` },
+        { key: 'order_no', label: '订单', html: (p) => `<a href="#/order/${p.order_id}">${esc(p.order_no)}</a>` }, { key: 'customer_name', label: '客户' },
+        { key: 'item_no', label: '货号' }, { key: 'plan_qty', label: '计划', num: true },
+        ...processes.map((k) => ({ key: 'p_' + k, label: k + '良品', num: true, nofilter: true, text: (p) => p.process[k].good || 0 })),
+        { key: 'completion', label: '完工率', num: true, nofilter: true, html: (p) => `<div class="progress" title="${p.completion}%"><i style="width:${Math.min(100, p.completion)}%"></i></div><span class="small">${p.completion}%</span>` },
+        { key: 'bad_rate', label: '不良率', num: true, nofilter: true, html: (p) => `${p.bad_rate}%` },
+        { key: 'due_date', label: '计划完工', html: (p) => esc(p.due_date) + (p.delayed ? ' <span class="tag danger">延期</span>' : '') },
+        { key: 'status', label: '状态', html: (p) => tag(p.status) },
+      ],
+      tree: [{ key: 'status', label: '状态' }, { key: 'customer_name', label: '客户' }, { key: 'order_no', label: '订单' }, { key: 'delay', label: '是否延期', text: (p) => (p.delayed ? '延期' : '正常') }],
+      schemes: [['status'], ['customer_name', 'order_no'], ['delay']],
+      quick: [{ key: 'prod_no', label: '布产单' }, { key: 'order_no', label: '订单' }, { key: 'item_no', label: '货号' }],
+      actions: can('production', 'edit') ? (p) => (p.status !== '已完工' ? `<button class="btn small primary" type="button" data-rep="${p.id}">报工</button>` : '') : null,
+      bind: (root) => { root.querySelectorAll('[data-rep]').forEach((b) => { b.onclick = () => reportModal(b.dataset.rep, processes); }); },
+    });
   });
 
   /**

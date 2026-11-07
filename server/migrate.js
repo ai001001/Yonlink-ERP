@@ -6,7 +6,7 @@
  */
 const { HttpError } = require('./http');
 const { num, log } = require('./core');
-const { RATING, USE_STATUS, CUSTOMER_SOURCES, PURCHASE_TYPES, COOP_STATUS } = require('./entities');
+const { CHILDREN, RATING, USE_STATUS, CUSTOMER_SOURCES, PURCHASE_TYPES, COOP_STATUS } = require('./entities');
 
 /**
  * 列定义快捷函数 / Column definition helper.
@@ -483,6 +483,7 @@ function rollbackBatch(ctx, id) {
           kept.push({ key: rec ? rec.k : r.record_id, msg: `已被${refs.map(([l, n]) => `${n}条${l}`).join('、')}引用，保留未删除` });
           continue;
         }
+        for (const [t, col] of CHILDREN[b.entity] || []) db.prepare(`DELETE FROM ${t} WHERE ${col}=?`).run(r.record_id);
         deleted += Number(db.prepare(`DELETE FROM ${profile.table} WHERE id=?`).run(r.record_id).changes);
       } else if (r.action === '覆盖' && r.before_json) {
         const before = JSON.parse(r.before_json);

@@ -33,37 +33,57 @@
     const ent = ERP.state.meta.entities[key];
     if (!ent) throw new Error('无权访问该页面或模块已停用');
     setTitle(ent.title);
-    const cols = ent.fields.filter((f) => f.list);
-    const page = Number(qs.get('page') || 1);
-    const q = qs.get('q') || '';
-    const extra = [...qs.entries()].filter(([k]) => k.startsWith('f_')).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join('');
-    const data = await get(`/api/e/${key}?page=${page}&size=50&q=${encodeURIComponent(q)}${extra}`);
     const canAdd = !ent.readonly && can(ent.module, 'add');
     const canEdit = !ent.readonly && can(ent.module, 'edit');
     const canDel = !ent.readonly && can(ent.module, 'delete');
-    const headers = [...cols.map((f) => f.label), ...(key === 'inventory' ? ['库存预警'] : []), ...(canEdit || canDel ? ['操作'] : [])];
-    const rows = data.rows.map((r) => [
-      ...cols.map((f) => cell(f, r, key)),
-      ...(key === 'inventory' ? [tag(r.alert)] : []),
-      ...(canEdit || canDel ? [`${canEdit ? `<button class="btn small" data-edit="${esc(r.id)}">编辑</button> ` : ''}${canDel ? `<button class="btn small danger" data-del="${esc(r.id)}">删除</button>` : ''}`] : []),
-    ]);
-    const pages = Math.max(1, Math.ceil(data.total / 50));
-    main.innerHTML = `<div class="panel">
-      <div class="panel-head"><h2>${esc(ent.title)} <span class="muted small">共 ${data.total} 条</span></h2>
-        <div class="toolbar">
-          <input class="search" id="q" placeholder="搜索关键字，回车查询" value="${esc(q)}">
-          ${canAdd ? '<button class="btn primary" id="add">＋ 新增</button>' : ''}
-          ${can(ent.module, 'export') ? '<button class="btn" id="exp">导出Excel</button>' : ''}
-          ${can(ent.module, 'print') ? '<button class="btn" id="prt">打印</button>' : ''}
-          ${key === 'currency' && can('trade', 'edit') ? '<button class="btn primary" id="autoRate">⟳ 自动更新汇率</button>' : ''}
-        </div></div>
-      ${key === 'currency' ? '<div class="alert info" id="rateStatus">汇率来源加载中…</div>' : ''}
-      ${ent.readonly ? '<div class="alert info">此台账由系统根据业务自动生成，只读。</div>' : ''}
-      ${tableHtml(headers, rows)}
-      <div class="pager"><span>第 ${page}/${pages} 页</span>
-        <button class="btn small" ${page <= 1 ? 'disabled' : ''} data-page="${page - 1}">上一页</button>
-        <button class="btn small" ${page >= pages ? 'disabled' : ''} data-page="${page + 1}">下一页</button></div></div>`;
-    const go = (p, qq) => { location.hash = `#/e/${key}?page=${p}&q=${encodeURIComponent(qq ?? q)}${extra}`; };
+    const textOf = (f, r) => (f.type === 'ref' ? r[f.name + '_label'] ?? '' : r[f.name] ?? '');
+    const columns = ent.fields.map((f) => ({
+      key: f.name, label: f.label, num: f.type === 'number', nofilter: f.type === 'textarea',
+      text: (r) => textOf(f, r), html: (r) => cell(f, r, key),
+    }));
+    if (key === 'inventory') columns.push({ key: 'alert', label: '库存预警', nofilter: true, text: (r) => r.alert, html: (r) => tag(r.alert) });
+    const toolbar = `${canAdd ? '<button class="btn primary" type="button" id="add">＋ 新增</button>' : ''}
+      ${key === 'currency' && can('trade', 'edit') ? '<button class="btn primary" type="button" id="autoRate">⟳ 自动更新汇率</button>' : ''}`;
+    const headHtml = `${key === 'currency' ? '<div class="alert info" id="rateStatus">汇率来源加载中…</div>' : ''}
+      ${ent.readonly ? '<div class="alert info">此台账由系统根据业务自动生成，只读。</div>' : ''}`;
+    // 地址栏中的 f_ 条件作为初始筛选（如从工作台跳转）/ f_ params in the hash act as initial filters
+    const initFilters = Object.fromEntries([...qs.entries()].filter(([k]) => k.startsWith('f_')).map(([k, v]) => [k.slice(2), [v]]));
+    const g = await ERP.grid(main, {
+      key: 'e.' + key, title: ent.title, mode: 'server', entity: key, module: ent.module, q: qs.get('q') || '',
+      columns, defaultCols: [...ent.fields.filter((f) => f.list).map((f) => f.name), ...(key === 'inventory' ? ['alert'] : [])],
+      tree: (ent.tree || []).map((k) => ({ key: k, label: (ent.fields.find((f) => f.name === k) || {}).label || k })),
+      schemes: ent.schemes || [],
+      quick: (ent.quick || []).map((k) => ({ key: k, label: (ent.fields.find((f) => f.name === k) || {}).label || k })),
+      toolbar, headHtml,
+      actions: canEdit || canDel ? (r) => `${canEdit ? `<button class="btn small" type="button" data-edit="${esc(r.id)}">编辑</button> ` : ''}${canDel ? `<button class="btn small danger" type="button" data-del="${esc(r.id)}">删除</button>` : ''}` : null,
+      bind: (root) => {
+        root.querySelectorAll('[data-edit]').forEach((b) => {
+          b.onclick = async () => open(await get(`/api/e/${key}/${encodeURIComponent(b.dataset.edit)}`));
+        });
+        root.querySelectorAll('[data-del]').forEach((b) => {
+          b.onclick = async () => {
+            if (!(await confirmBox('确定删除该记录吗？删除后不可恢复。'))) return;
+            try { await del(`/api/e/${key}/${encodeURIComponent(b.dataset.del)}`); toast('已删除', 'ok'); clearOptions(); g.reload(); } catch (e) { toast(e.message, 'error'); }
+          };
+        });
+      },
+      initFilters,
+    });
+    const open = async (row) => modal({
+      title: (row ? '编辑' : '新增') + ent.title, wide: ent.fields.length > 8, body: await formHtml(ent.fields, row || {}),
+      buttons: [{
+        text: '保存', cls: 'primary', onClick: async (mm) => {
+          const body = readForm(mm.el);
+          if (row) await put(`/api/e/${key}/${encodeURIComponent(row.id)}`, body); else await post(`/api/e/${key}`, body);
+          mm.close();
+          clearOptions();
+          toast('保存成功', 'ok');
+          g.reload();
+        },
+      }],
+    });
+    const addBtn = main.querySelector('#add');
+    if (addBtn) addBtn.onclick = () => open(null);
     if (key === 'currency') {
       get('/api/rates/status').then((st) => {
         const el = main.querySelector('#rateStatus');
@@ -81,46 +101,13 @@
                 ${r.unchanged ? `<p class="small muted">${r.unchanged} 个币种汇率无变化</p>` : ''}`,
             });
             ERP.clearOptions();
-            ERP.navigate();
-          } catch (e) { toast(e.message, 'error'); ar.disabled = false; }
+            g.reload();
+          } catch (e) { toast(e.message, 'error'); } finally { ar.disabled = false; }
         };
       }
     }
-    main.querySelector('#q').onkeydown = (e) => { if (e.key === 'Enter') go(1, e.target.value.trim()); };
-    main.querySelectorAll('[data-page]').forEach((b) => { b.onclick = () => go(b.dataset.page); });
-    const plain = data.rows.map((r) => cols.map((f) => (f.type === 'ref' ? r[f.name + '_label'] ?? '' : r[f.name] ?? '')));
-    const expBtn = main.querySelector('#exp');
-    if (expBtn) expBtn.onclick = () => exportTable(ent.module, ent.title, cols.map((f) => f.label), plain);
-    const prtBtn = main.querySelector('#prt');
-    if (prtBtn) prtBtn.onclick = () => printHtml(`<h1>${esc(ent.title)}</h1><div class="sub">打印时间：${new Date().toLocaleString()}</div>${tableHtml(cols.map((f) => f.label), plain.map((r) => r.map(esc)))}`);
-    const open = async (row) => {
-      const m = modal({
-        title: (row ? '编辑' : '新增') + ent.title, wide: ent.fields.length > 8, body: await formHtml(ent.fields, row || {}),
-        buttons: [{
-          text: '保存', cls: 'primary', onClick: async (mm) => {
-            const body = readForm(mm.el);
-            if (row) await put(`/api/e/${key}/${encodeURIComponent(row.id)}`, body); else await post(`/api/e/${key}`, body);
-            mm.close();
-            clearOptions();
-            toast('保存成功', 'ok');
-            ERP.navigate();
-          },
-        }],
-      });
-      return m;
-    };
-    const addBtn = main.querySelector('#add');
-    if (addBtn) addBtn.onclick = () => open(null);
-    main.querySelectorAll('[data-edit]').forEach((b) => {
-      b.onclick = async () => open(await get(`/api/e/${key}/${encodeURIComponent(b.dataset.edit)}`));
-    });
-    main.querySelectorAll('[data-del]').forEach((b) => {
-      b.onclick = async () => {
-        if (!(await confirmBox('确定删除该记录吗？删除后不可恢复。'))) return;
-        try { await del(`/api/e/${key}/${encodeURIComponent(b.dataset.del)}`); toast('已删除', 'ok'); clearOptions(); ERP.navigate(); } catch (e) { toast(e.message, 'error'); }
-      };
-    });
   }
+
   route(/^\/e\/(\w+)$/, ([key], main, qs) => entityPage(key, main, qs));
 
   /**
@@ -144,6 +131,53 @@
     return items.join('');
   }
 
+  /** 客户页签（参照亿星客户管理页签）/ customer tabs modelled on 亿星 */
+  const CUSTOMER_TABS = [['customer_contact', '联系人'], ['customer_mark', '唛头'], ['customer_forwarder', '货代'], ['customer_bank', '银行账号']];
+
+  /**
+   * 渲染客户的联系人/唛头/货代/银行账号页签 / Render the contact, mark, forwarder and bank tabs of a customer.
+   * @param {HTMLElement} box 容器 / container
+   * @param {number} customerId 客户ID / customer id
+   * @param {string} [active] 当前页签 / active tab
+   */
+  async function customerTabs(box, customerId, active) {
+    const tabs = CUSTOMER_TABS.filter(([k]) => ERP.state.meta.entities[k]);
+    if (!tabs.length) { box.remove(); return; }
+    const cur = active || tabs[0][0];
+    const ent = ERP.state.meta.entities[cur];
+    const counts = await Promise.all(tabs.map(([k]) => get(`/api/e/${k}?size=1&f_customer_id=${customerId}`).then((d) => d.total).catch(() => 0)));
+    const { rows } = await get(`/api/e/${cur}?size=200&f_customer_id=${customerId}`);
+    const fields = ent.fields.filter((f) => f.name !== 'customer_id');
+    const canEdit = can('customer', 'edit');
+    const canAdd = can('customer', 'add');
+    box.innerHTML = `<div class="panel-head"><div class="tabs">${tabs.map(([k, l], i) => `<button class="tab ${k === cur ? 'active' : ''}" type="button" data-ctab="${k}">${l} <span class="muted small">${counts[i]}</span></button>`).join('')}</div>
+      ${canAdd ? `<button class="btn small primary" type="button" data-cadd>＋ 新增${esc(tabs.find(([k]) => k === cur)[1])}</button>` : ''}</div>
+      ${tableHtml([...fields.map((f) => f.label), ...(canEdit ? ['操作'] : [])], rows.map((r) => [...fields.map((f) => (f.type === 'textarea' ? `<span class="pre">${esc(r[f.name])}</span>` : esc(f.type === 'ref' ? r[f.name + '_label'] : r[f.name]))),
+        ...(canEdit ? [`<button class="btn small" type="button" data-cedit="${r.id}">编辑</button> <button class="btn small danger" type="button" data-cdel="${r.id}">删除</button>`] : [])]))}`;
+    box.querySelectorAll('[data-ctab]').forEach((b) => { b.onclick = () => customerTabs(box, customerId, b.dataset.ctab); });
+    const form = async (row) => modal({
+      title: `${row ? '编辑' : '新增'}${ent.title}`, wide: fields.length > 6, body: await formHtml(fields, row || {}),
+      buttons: [{
+        text: '保存', cls: 'primary', onClick: async (m) => {
+          const body = { ...readForm(m.el), customer_id: customerId };
+          if (row) await put(`/api/e/${cur}/${row.id}`, body); else await post(`/api/e/${cur}`, body);
+          m.close();
+          toast('已保存', 'ok');
+          if (cur === 'customer_contact' && body.is_main === '是') ERP.navigate(); else customerTabs(box, customerId, cur);
+        },
+      }],
+    });
+    const ab = box.querySelector('[data-cadd]');
+    if (ab) ab.onclick = () => form(null);
+    box.querySelectorAll('[data-cedit]').forEach((b) => { b.onclick = () => form(rows.find((r) => r.id === Number(b.dataset.cedit))); });
+    box.querySelectorAll('[data-cdel]').forEach((b) => {
+      b.onclick = async () => {
+        if (!(await confirmBox('确定删除这条记录？'))) return;
+        try { await del(`/api/e/${cur}/${b.dataset.cdel}`); toast('已删除', 'ok'); customerTabs(box, customerId, cur); } catch (e) { toast(e.message, 'error'); }
+      };
+    });
+  }
+
   // ---------- 客户 360 / customer overview ----------
   route(/^\/customer\/(\d+)$/, async ([id], main) => {
     const d = await get(`/api/customers/${id}/overview`);
@@ -155,12 +189,14 @@
       <div class="kv"><div><b>编码</b><span>${esc(c.code)}</span></div><div><b>国别</b><span>${esc(c.country)}</span></div><div><b>联系人</b><span>${esc(c.contact)}</span></div>
       <div><b>邮箱</b><span>${esc(c.email)}</span></div><div><b>业务员</b><span>${esc(c.salesman_name)}</span></div><div><b>来源</b><span>${esc(c.source)}</span></div>
       ${await moreKv('customer', c, ['code', 'name', 'country', 'contact', 'email', 'salesman_id', 'source', 'level'])}</div></div>
+      <div class="panel" id="custTabs"></div>
       ${sec('跟进日志 / 询盘记录', ['时间', '类型', '内容', '下次跟进', '记录人'], d.follows.map((x) => [esc(x.created_at), esc(x.type), esc(x.content), esc(x.next_date), esc(x.user_name)]))}
       ${sec('往来邮件', ['时间', '方向', '主题', '分类'], d.mails.map((x) => [esc(x.created_at), esc(x.direction), esc(x.subject), esc(x.category)]))}
       ${sec('历史报价', ['报价单号', '日期', '金额', '状态'], d.quotes.map((x) => [`<a href="#/quote/${x.id}">${esc(x.quote_no)}</a>`, esc(String(x.created_at).slice(0, 10)), `${money(x.amount)} ${esc(x.currency)}`, tag(x.status)]))}
       ${sec('历史送样', ['送样单号', '货号', '快递单号', '状态'], d.sends.map((x) => [`<a href="#/send/${x.id}">${esc(x.send_no)}</a>`, esc(x.item_nos), esc(x.tracking_no), tag(x.status)]))}
       ${sec('历史订单', ['订单号', '下单日期', '金额', '状态'], d.orders.map((x) => [`<a href="#/order/${x.id}">${esc(x.order_no)}</a>`, esc(x.order_date), `${money(x.amount)} ${esc(x.currency)}`, tag(x.status)]))}
       ${sec('回款记录', ['日期', '订单', '类型', '金额', '折人民币'], d.receipts.map((x) => [esc(x.receipt_date), esc(x.order_no), esc(x.type), `${money(x.amount)} ${esc(x.currency)}`, money(x.amount_cny)]))}`;
+    customerTabs(main.querySelector('#custTabs'), Number(id));
     const fb = main.querySelector('#follow');
     if (fb) {
       fb.onclick = async () => modal({

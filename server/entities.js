@@ -122,6 +122,44 @@ const ENTITIES = {
       f('status', '状态', { readonly: true }), f('created_at', '时间', { readonly: true }),
     ],
   },
+  // ---- 客户页签（亿星：联系人、唛头、货代、银行账号）/ customer tabs modelled on 亿星 ----
+  customer_contact: {
+    module: 'customer', table: 'customer_contacts', title: '客户联系人', search: ['name', 'email', 'phone', 'mobile'], child: true,
+    parent: { entity: 'customer', field: 'customer_id' }, scope: { own: 'customer_id IN (SELECT id FROM customers WHERE salesman_id = :emp)' },
+    fields: [
+      f('customer_id', '客户', { type: 'ref', ref: 'customer', required: true }), f('name', '姓名', { required: true }), f('title', '职务'),
+      f('email', 'Email'), f('phone', '电话'), f('mobile', '手机'), f('im', 'WhatsApp/微信/Skype'),
+      f('birthday', '生日', { type: 'date', list: false }), f('hobby', '爱好/特点', { list: false }),
+      f('is_main', '主联系人', { type: 'select', options: ['是', '否'], default: '否' }), f('remark', '备注', { type: 'textarea', list: false }),
+    ],
+  },
+  customer_mark: {
+    module: 'customer', table: 'customer_marks', title: '客户唛头', search: ['name', 'front_mark', 'side_mark'], child: true,
+    parent: { entity: 'customer', field: 'customer_id' }, scope: { own: 'customer_id IN (SELECT id FROM customers WHERE salesman_id = :emp)' },
+    fields: [
+      f('customer_id', '客户', { type: 'ref', ref: 'customer', required: true }), f('name', '唛头名称', { required: true }),
+      f('front_mark', '正唛', { type: 'textarea' }), f('side_mark', '侧唛', { type: 'textarea' }), f('inner_mark', '内盒唛', { type: 'textarea' }),
+      f('is_default', '默认唛头', { type: 'select', options: ['是', '否'], default: '否' }), f('remark', '备注', { type: 'textarea', list: false }),
+    ],
+  },
+  customer_forwarder: {
+    module: 'customer', table: 'customer_forwarders', title: '客户指定货代', search: ['name', 'contact'], child: true,
+    parent: { entity: 'customer', field: 'customer_id' }, scope: { own: 'customer_id IN (SELECT id FROM customers WHERE salesman_id = :emp)' },
+    fields: [
+      f('customer_id', '客户', { type: 'ref', ref: 'customer', required: true }), f('agency_id', '服务机构档案', { type: 'ref', ref: 'agency' }),
+      f('name', '货代名称', { required: true }), f('contact', '联系人'), f('phone', '电话'), f('email', 'Email'),
+      f('port', '起运港'), f('remark', '备注', { type: 'textarea', list: false }),
+    ],
+  },
+  customer_bank: {
+    module: 'customer', table: 'customer_banks', title: '客户银行账号', search: ['bank_name', 'account_no', 'account_name'], child: true,
+    parent: { entity: 'customer', field: 'customer_id' }, scope: { own: 'customer_id IN (SELECT id FROM customers WHERE salesman_id = :emp)' },
+    fields: [
+      f('customer_id', '客户', { type: 'ref', ref: 'customer', required: true }), f('bank_name', '开户银行', { required: true }),
+      f('account_name', '账户名称'), f('account_no', '银行账号', { required: true }), f('swift', 'SWIFT代码'), f('currency', '币种'),
+      f('bank_address', '银行地址', { list: false }), f('remark', '备注', { type: 'textarea', list: false }),
+    ],
+  },
   sample: {
     module: 'sample', table: 'samples', title: '样品档案', search: ['company_no', 'customer_no', 'factory_no', 'name', 'name_en'],
     scope: { designer: 'designer_id = :emp' },
@@ -184,6 +222,40 @@ const ENTITIES = {
   },
 };
 
+
+/**
+ * 列表导航树可分组字段、默认导航方案、快速查找字段（参照亿星“导航树”“快速查找区”）
+ * Navigation-tree group fields, default tree schemes and quick-search fields per entity (modelled on 亿星).
+ */
+const NAV = {
+  department: { tree: ['manager'], schemes: [['manager']], quick: ['name'] },
+  employee: { tree: ['dept_id', 'position', 'status'], schemes: [['dept_id', 'status'], ['status']], quick: ['emp_no', 'name', 'phone'] },
+  supplier: { tree: ['type', 'purchase_type', 'coop_status', 'rating', 'province', 'city', 'settlement', 'use_status'], schemes: [['type', 'rating'], ['purchase_type', 'coop_status'], ['province', 'city'], ['rating']], quick: ['code', 'name', 'contact', 'phone', 'item_range'] },
+  supplier_price: { tree: ['supplier_id', 'currency', 'source'], schemes: [['supplier_id'], ['source']], quick: ['item_no', 'ref_no'] },
+  agency: { tree: ['type', 'rating'], schemes: [['type'], ['rating']], quick: ['name', 'contact', 'phone'] },
+  agency_record: { tree: ['agency_id', 'user_name'], schemes: [['agency_id']], quick: ['content'] },
+  customer: { tree: ['salesman_id', 'merchandiser_id', 'country', 'level', 'source', 'customer_type', 'province', 'city', 'price_term', 'currency', 'use_status'], schemes: [['salesman_id', 'country'], ['country', 'level'], ['source'], ['level'], ['use_status']], quick: ['code', 'name', 'contact', 'email', 'phone', 'full_name_en'] },
+  customer_follow: { tree: ['customer_id', 'type', 'user_name'], schemes: [['customer_id', 'type'], ['type']], quick: ['content'] },
+  mail: { tree: ['direction', 'category', 'customer_id', 'status'], schemes: [['category'], ['direction'], ['customer_id']], quick: ['subject', 'mail_from', 'mail_to'] },
+  sample: { tree: ['series', 'material', 'craft', 'color', 'supplier_id', 'designer_id', 'progress', 'status', 'compose_type', 'unit', 'use_status'], schemes: [['supplier_id', 'material'], ['designer_id', 'progress'], ['series', 'material'], ['status'], ['use_status']], quick: ['company_no', 'customer_no', 'factory_no', 'name', 'name_en'] },
+  sample_revision: { tree: ['sample_id', 'stage', 'user_name'], schemes: [['stage'], ['sample_id']], quick: ['content'] },
+  currency: { tree: [], schemes: [], quick: ['code', 'name'] },
+  rate_history: { tree: ['code', 'user_name'], schemes: [['code']], quick: ['code'] },
+  trade_term: { tree: [], schemes: [], quick: ['code', 'name'] },
+  inventory: { tree: ['category', 'unit'], schemes: [['category']], quick: ['code', 'name'] },
+  log: { tree: ['type', 'module', 'user_name', 'action'], schemes: [['module', 'action'], ['user_name'], ['type']], quick: ['user_name', 'action', 'target', 'ip'] },
+  customer_contact: { tree: ['customer_id', 'is_main'], schemes: [['customer_id']], quick: ['name', 'email', 'phone'] },
+  customer_mark: { tree: ['customer_id'], schemes: [['customer_id']], quick: ['name'] },
+  customer_forwarder: { tree: ['customer_id'], schemes: [['customer_id']], quick: ['name', 'contact'] },
+  customer_bank: { tree: ['customer_id', 'currency'], schemes: [['customer_id']], quick: ['bank_name', 'account_no'] },
+};
+for (const [k, v] of Object.entries(NAV)) if (ENTITIES[k]) Object.assign(ENTITIES[k], v);
+
+/** 客户的子表（删除客户时一并删除）/ Child tables removed together with a customer */
+const CHILDREN = {
+  customer: [['customer_contacts', 'customer_id'], ['customer_marks', 'customer_id'], ['customer_forwarders', 'customer_id'], ['customer_banks', 'customer_id']],
+};
+
 /** 引用实体显示字段 / Display expression for referenced entities */
 const REF_LABEL = {
   department: { table: 'departments', label: 'name' },
@@ -200,4 +272,4 @@ const REF_LABEL = {
   trade_term: { table: 'trade_terms', label: "code || ' ' || name", pk: 'code' },
 };
 
-module.exports = { ENTITIES, REF_LABEL, RATING, USE_STATUS, CUSTOMER_SOURCES, PURCHASE_TYPES, COOP_STATUS };
+module.exports = { ENTITIES, REF_LABEL, CHILDREN, RATING, USE_STATUS, CUSTOMER_SOURCES, PURCHASE_TYPES, COOP_STATUS };
