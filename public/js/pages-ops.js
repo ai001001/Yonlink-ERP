@@ -113,9 +113,29 @@
           <label><span>工艺要求</span><input name="craft" value="${esc(o.craft)}" ${dis}></label>
           <label><span>出货后开票期限(天)</span><input name="invoice_due_days" type="number" value="${esc(o.invoice_due_days)}" ${dis}></label>
           <label class="wide"><span>备注</span><input name="remark" value="${esc(o.remark)}" ${dis}></label></form>
-        ${!isNew ? `<div class="kv" style="margin-top:10px"><div><b>订单金额</b><span>${money(o.amount)} ${esc(o.currency)}</span></div>${designer ? '' : `<div><b>已收款</b><span>${money(o.received)}</span></div><div><b>已开票</b><span>${money(o.invoiced)}</span></div>`}
+        ${!isNew ? `<div class="kv" style="margin-top:10px">${designer ? `<div><b>订单金额</b><span>${money(o.amount)} ${esc(o.currency)}</span></div>` : `<div><b>货款</b><span>${money(o.goods_amount)} ${esc(o.currency)}</span></div>
+          <div><b>加减项</b><span>${money(o.charges_amount)}</span></div><div><b>合同总额</b><span><b>${money(o.amount)} ${esc(o.currency)}</b></span></div>`}${designer ? '' : `<div><b>已收款</b><span>${money(o.received)}</span></div><div><b>已开票</b><span>${money(o.invoiced)}</span></div>`}
           <div><b>业务员</b><span>${esc(o.salesman_name)}</span></div><div><b>来源报价</b><span>${o.quote_no ? `<a href="#/quote/${o.quote_id}">${esc(o.quote_no)}</a>` : '-'}</span></div></div>` : ''}</div>
-      <div class="panel"><div class="panel-head"><h3>订单产品 ${designer ? '<span class="muted small">（仅显示本人设计样品）</span>' : ''}</h3>${editable ? '<button class="btn" id="addItem" type="button">＋ 添加产品</button>' : ''}</div>
+      ${designer ? '' : `<div class="panel"><div class="panel-head"><h3>订单概要 / 合同条款 / 唛头</h3>${editable ? '<button class="btn small" type="button" id="markFromCust">从客户唛头带入</button>' : ''}</div>
+        <form class="form-grid" id="sum">
+          <label><span>客户PO号</span><input name="po_no" value="${esc(o.po_no)}" ${dis}></label>
+          <label><span>形式发票号(PI)</span><input name="pi_no" value="${esc(o.pi_no)}" ${dis}></label>
+          <label><span>付款方式</span><input name="pay_terms" value="${esc(o.pay_terms)}" placeholder="如 T/T 30% DEPOSIT" ${dis}></label>
+          <label><span>预收订金比率%</span><input name="deposit_rate" type="number" step="any" value="${esc(o.deposit_rate)}" ${dis}></label>
+          <label><span>起运港</span><input name="port_loading" value="${esc(o.port_loading)}" ${dis}></label>
+          <label><span>目的港</span><input name="port_dest" value="${esc(o.port_dest)}" ${dis}></label>
+          <label><span>运输方式</span><input name="transport" value="${esc(o.transport)}" placeholder="海运/空运/快递" ${dis}></label>
+          <label><span>分批装运</span><select name="partial_shipment" ${dis}>${optHtml(['允许', '不允许'], o.partial_shipment)}</select></label>
+          <label><span>转运</span><select name="transshipment" ${dis}>${optHtml(['允许', '不允许'], o.transshipment)}</select></label>
+          <label><span>保险</span><input name="insurance" value="${esc(o.insurance)}" ${dis}></label>
+          <label><span>签约地点</span><input name="sign_place" value="${esc(o.sign_place)}" ${dis}></label>
+          <label class="wide"><span>合同条款</span><textarea name="contract_terms" rows="3" ${dis}>${esc(o.contract_terms)}</textarea></label>
+          <label class="wide"><span>工厂条款（给工厂的要求）</span><textarea name="factory_terms" rows="2" ${dis}>${esc(o.factory_terms)}</textarea></label>
+          <label><span>正唛</span><textarea name="front_mark" rows="4" ${dis}>${esc(o.front_mark)}</textarea></label>
+          <label><span>侧唛</span><textarea name="side_mark" rows="4" ${dis}>${esc(o.side_mark)}</textarea></label>
+          <label><span>内盒唛</span><textarea name="inner_mark" rows="4" ${dis}>${esc(o.inner_mark)}</textarea></label>
+        </form>${isNew ? '<p class="muted small">新订单留空的付款方式、目的港、唛头会自动从客户档案带出。</p>' : ''}</div>`}
+      <div class="panel"><div class="panel-head"><h3>订单产品 ${designer ? '<span class="muted small">（仅显示本人设计样品）</span>' : ''}</h3>${editable ? '<span class="toolbar"><button class="btn" id="histItem" type="button">历史记录导入</button><button class="btn" id="addItem" type="button">＋ 添加产品</button></span>' : ''}</div>
         <div class="table-wrap items-table"><table><thead><tr><th>货号</th><th>描述</th><th>数量</th><th>单价</th><th>工艺</th><th>规格</th><th>包装</th><th class="num">完工/已排出货</th><th></th></tr></thead><tbody id="items">${o.items.map(row).join('')}</tbody></table></div></div>
       ${isNew || designer ? '' : `
       <div class="panel"><h3 class="section-title">订单变更记录与联动修正任务</h3>
@@ -135,16 +155,53 @@
         <div class="panel"><div class="panel-head"><h3>布产进度</h3>${can('production', 'add') && !o.risk_lock && !['已出货', '已完成'].includes(o.status) ? '<button class="btn small" id="produce">一键布产</button>' : ''}</div>
           ${tableHtml(['布产单', '货号', '计划', '完工', '状态'], o.productions.map((p) => [can('production', 'view') ? `<a href="#/production/${p.id}">${esc(p.prod_no)}</a>` : esc(p.prod_no), esc(p.item_no), p.plan_qty, p.reported, tag(p.status)]))}</div>
       </div>
-      <div class="panel"><h3 class="section-title">订单成本核算（料工费）</h3><div class="kv">
-        <div><b>销售收入¥</b><span>${money(o.cost.revenue_cny)}</span></div><div><b>采购成本¥</b><span>${money(o.cost.purchase_cost)}</span></div><div><b>领料成本¥</b><span>${money(o.cost.material_cost)}</span></div>
-        <div><b>汇兑损益¥</b><span>${money(o.cost.fx_gain)}</span></div><div><b>毛利¥</b><span><b>${money(o.cost.profit)}</b></span></div></div></div>`}`;
+      <div class="panel"><div class="panel-head"><h3>加减项（模具费、样品费、折扣、佣金扣减等）</h3>${can('order', 'edit') && o.status !== '已完成' ? '<button class="btn small" type="button" id="addCharge">＋ 登记加减项</button>' : ''}</div>
+        ${tableHtml(['类型', '费用名称', '金额', '备注', '登记人', '时间', ''], o.charges.map((c) => [c.kind === '减' ? '<span class="tag warn">减</span>' : '<span class="tag ok">加</span>', esc(c.name), money(c.amount), esc(c.remark), esc(c.user_name), esc(c.created_at),
+    can('order', 'edit') && o.status !== '已完成' ? `<button class="btn small danger" type="button" data-delc="${c.id}">删除</button>` : '']))}
+        <div class="kv" style="margin-top:8px"><div><b>货款</b><span>${money(o.goods_amount)}</span></div><div><b>加减合计</b><span>${money(o.charges_amount)}</span></div><div><b>合同总额（应收）</b><span><b>${money(o.amount)} ${esc(o.currency)}</b></span></div></div></div>
+      <div class="panel"><h3 class="section-title">效益测算（预估 vs 实际）</h3>
+        ${tableHtml(['项目', '预估（下单时）', '实际（按采购/领料）'], [
+    ['销售收入¥', money(o.estimate.revenue_cny), money(o.cost.revenue_cny)],
+    ['产品成本¥', money(o.estimate.cost), money(o.cost.purchase_cost + o.cost.material_cost)],
+    [`客户佣金¥（${o.estimate.commission_rate}%）`, money(o.estimate.commission), '-'],
+    ['汇兑损益¥', '-', money(o.cost.fx_gain)],
+    ['<b>毛利¥</b>', `<b>${money(o.estimate.profit)}</b>`, `<b>${money(o.cost.profit)}</b>`],
+    ['毛利率', o.estimate.profit_rate === null ? '-' : `${o.estimate.profit_rate}%`, o.cost.revenue_cny > 0 ? `${Math.round(o.cost.profit / o.cost.revenue_cny * 10000) / 100}%` : '-'],
+  ])}
+        <details style="margin-top:8px"><summary class="small">预估成本明细（按货号）</summary>${tableHtml(['货号', '数量', '单位成本¥', '成本来源', '成本¥'], o.estimate.lines.map((l) => [esc(l.item_no), l.qty, money(l.unit_cost), esc(l.source), money(l.cost)]))}</details></div>`}`;
     const tbody = main.querySelector('#items');
     const bindRm = () => tbody.querySelectorAll('[data-rm]').forEach((b) => { b.onclick = () => b.closest('tr').remove(); });
     bindRm();
     const ai = main.querySelector('#addItem');
     if (ai) ai.onclick = () => { tbody.insertAdjacentHTML('beforeend', row({})); bindRm(); };
+    const hi = main.querySelector('#histItem');
+    if (hi) {
+      hi.onclick = () => {
+        const cid = main.querySelector('#hdr [name="customer_id"]').value;
+        if (!cid) { toast('请先选择客户', 'error'); return; }
+        ERP.historyPicker(cid, (rows) => {
+          for (const r of rows) tbody.insertAdjacentHTML('beforeend', row({ sample_id: r.sample_id, description: r.description, qty: r.qty, unit_price: r.price, craft: r.craft, spec: r.spec, package: r.package }));
+          bindRm();
+        });
+      };
+    }
+    const mfc = main.querySelector('#markFromCust');
+    if (mfc) {
+      mfc.onclick = async () => {
+        const cid = main.querySelector('#hdr [name="customer_id"]').value;
+        if (!cid) { toast('请先选择客户', 'error'); return; }
+        const { rows } = await get(`/api/e/customer_mark?f_customer_id=${cid}&size=50`);
+        if (!rows.length) { toast('该客户还没有维护唛头（客户详情 → 唛头页签）', 'error'); return; }
+        const fill = (m) => { for (const k of ['front_mark', 'side_mark', 'inner_mark']) main.querySelector(`#sum [name="${k}"]`).value = m[k] || ''; toast(`已带入唛头「${m.name}」`, 'ok'); };
+        if (rows.length === 1) { fill(rows[0]); return; }
+        const mm = modal({
+          title: '选择客户唛头', body: tableHtml(['唛头名称', '正唛', '默认', ''], rows.map((m, i) => [esc(m.name), `<span class="pre">${esc(m.front_mark)}</span>`, esc(m.is_default), `<button class="btn small primary" type="button" data-pick="${i}">选用</button>`])),
+        });
+        mm.el.querySelectorAll('[data-pick]').forEach((b) => { b.onclick = () => { fill(rows[Number(b.dataset.pick)]); mm.close(); }; });
+      };
+    }
     const collect = () => {
-      const h = Object.fromEntries([...main.querySelectorAll('#hdr [name]')].map((el) => [el.name, el.value]));
+      const h = Object.fromEntries([...main.querySelectorAll('#hdr [name], #sum [name]')].map((el) => [el.name, el.value]));
       h.items = [...tbody.querySelectorAll('tr')].map((tr) => ({ id: tr.dataset.id ? Number(tr.dataset.id) : undefined, ...Object.fromEntries([...tr.querySelectorAll('[data-f]')].map((el) => [el.dataset.f, el.value])) })).filter((x) => x.sample_id);
       return h;
     };
@@ -169,13 +226,38 @@
     if (!isNew && !designer) {
       if (can('order', 'edit') && o.status === '待确认') btn('确认订单(生产中)', '', async () => { await post(`/api/orders/${id}/status`, { status: '生产中' }); ERP.navigate(); });
       if (can('order', 'edit') && o.status === '已出货') btn('订单完结', '', async () => { await post(`/api/orders/${id}/status`, { status: '已完成' }); ERP.navigate(); });
+      if (can('order', 'add')) {
+        btn('翻单（复制为新订单）', '', () => modal({
+          title: `翻单：复制 ${o.order_no} 为新订单`,
+          body: '<p class="small muted">复制货号、数量、单价、条款与唛头；客户PO号、PI号、加减项不复制。已锁定的旧货号自动换成转正后的新货号。</p><label class="field"><span>新订单交期</span><input type="date" name="delivery_date"></label>',
+          buttons: [{ text: '生成新订单', cls: 'primary', onClick: async (m) => { const r = await post(`/api/orders/${id}/copy`, readForm(m.el)); m.close(); toast(`已生成新订单 ${r.order_no}`, 'ok'); location.hash = '#/order/' + r.id; } }],
+        }));
+      }
+      const ac = main.querySelector('#addCharge');
+      if (ac) {
+        ac.onclick = () => modal({
+          title: '登记加减项', body: `<div class="form-grid"><label><span class="req">类型</span><select name="kind">${optHtml(['加', '减'], '加', false)}</select></label>
+            <label><span class="req">费用名称</span><input name="name" placeholder="模具费 / 样品费 / 折扣 / 佣金扣减"></label>
+            <label><span class="req">金额（${esc(o.currency)}）</span><input name="amount" type="number" step="any"></label><label class="wide"><span>备注</span><input name="remark"></label></div>`,
+          buttons: [{ text: '保存', cls: 'primary', onClick: async (m) => { const r = await post(`/api/orders/${id}/charges`, readForm(m.el)); m.close(); toast(`已登记，合同总额 ${money(r.amount)} ${o.currency}`, 'ok'); ERP.navigate(); } }],
+        });
+      }
+      main.querySelectorAll('[data-delc]').forEach((b) => {
+        b.onclick = async () => { if (!(await confirmBox('删除这条加减项？'))) return; try { await del(`/api/orders/${id}/charges/${b.dataset.delc}`); toast('已删除', 'ok'); ERP.navigate(); } catch (e) { toast(e.message, 'error'); } };
+      });
       if (can('order', 'print')) {
         btn('打印订单(PI)', '', () => printHtml(`<h1>${esc(ERP.state.meta.company.name)}</h1><div class="sub">${esc(ERP.state.meta.company.name_en)}<br><b style="font-size:15px">形式发票 / 销售确认书 PROFORMA INVOICE</b></div>
           <table style="margin-bottom:8px"><tr><td>订单号 No.: ${esc(o.order_no)}</td><td>客户: ${esc(o.customer_name)}（${esc(o.country)}）</td><td>日期: ${esc(o.order_date)}</td></tr>
           <tr><td>贸易术语: ${esc(o.term)}</td><td>交期: ${esc(o.delivery_date)}</td><td>包装: ${esc(o.package_req)}</td></tr></table>
           <table><thead><tr><th>No.</th><th>货号</th><th>描述</th><th>工艺</th><th>规格</th><th>包装</th><th>数量</th><th>单价</th><th>金额</th></tr></thead><tbody>
           ${o.items.map((i, n) => `<tr><td>${n + 1}</td><td>${esc(i.item_no)}</td><td>${esc(i.description)}</td><td>${esc(i.craft)}</td><td>${esc(i.spec)}</td><td>${esc(i.package)}</td><td>${i.qty}</td><td>${money(i.unit_price)}</td><td>${money(i.qty * i.unit_price)}</td></tr>`).join('')}
-          <tr><td colspan="8" style="text-align:right"><b>合计 ${esc(o.currency)}</b></td><td><b>${money(o.amount)}</b></td></tr></tbody></table>`));
+          <tr><td colspan="8" style="text-align:right">货款 Goods ${esc(o.currency)}</td><td>${money(o.goods_amount)}</td></tr>
+          ${o.charges.map((c) => `<tr><td colspan="8" style="text-align:right">${c.kind === '减' ? '减 Less' : '加 Add'}：${esc(c.name)}</td><td>${c.kind === '减' ? '-' : ''}${money(c.amount)}</td></tr>`).join('')}
+          <tr><td colspan="8" style="text-align:right"><b>合同总额 Total ${esc(o.currency)}</b></td><td><b>${money(o.amount)}</b></td></tr></tbody></table>
+          <table style="margin-top:8px"><tr><td>客户PO No.: ${esc(o.po_no)}</td><td>PI No.: ${esc(o.pi_no)}</td><td>付款方式 Payment: ${esc(o.pay_terms)}${o.deposit_rate ? `（订金 ${o.deposit_rate}%）` : ''}</td></tr>
+          <tr><td>起运港 Loading: ${esc(o.port_loading)}</td><td>目的港 Destination: ${esc(o.port_dest)}</td><td>运输 Transport: ${esc(o.transport)}　分批: ${esc(o.partial_shipment)}　转运: ${esc(o.transshipment)}</td></tr></table>
+          ${o.contract_terms ? `<h3>合同条款 Terms</h3><div class="pre">${esc(o.contract_terms)}</div>` : ''}
+          ${o.front_mark || o.side_mark ? `<h3>唛头 Shipping Marks</h3><table><tr><th>正唛 Front</th><th>侧唛 Side</th><th>内盒 Inner</th></tr><tr><td class="pre">${esc(o.front_mark)}</td><td class="pre">${esc(o.side_mark)}</td><td class="pre">${esc(o.inner_mark)}</td></tr></table>` : ''}`));
       }
       if (can('order', 'export')) btn('导出Excel', '', () => exportTable('order', `订单${o.order_no}`, ['货号', '描述', '数量', '单价', '金额', '工艺', '规格', '包装', '已出货'], o.items.map((i) => [i.item_no, i.description, i.qty, i.unit_price, i.qty * i.unit_price, i.craft, i.spec, i.package, i.shipped_qty])));
       main.querySelectorAll('[data-task]').forEach((b) => {

@@ -22,7 +22,10 @@ function audit(db) {
   check('库存数量不为负', all('SELECT code, qty FROM inventory WHERE qty < -0.0001'));
   check('出货数量不超过订单数量', all(`SELECT oi.id, oi.item_no, oi.qty, SUM(si.qty) shipped FROM order_items oi JOIN shipment_items si ON si.order_item_id=oi.id
     JOIN shipments s ON s.id=si.shipment_id AND s.status<>'已取消' GROUP BY oi.id HAVING shipped > oi.qty`));
-  const orderAmt = `(SELECT COALESCE(SUM(qty*unit_price),0) FROM order_items WHERE order_id=o.id)`;
+  // 合同总额 = 货款 + 加减项（旧库没有加减项表时按 0）/ contract total = goods + charges (0 on older databases)
+  const hasCharges = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='order_charges'").get();
+  const charges = hasCharges ? "(SELECT COALESCE(SUM(CASE WHEN kind='减' THEN -amount ELSE amount END),0) FROM order_charges WHERE order_id=o.id)" : '0';
+  const orderAmt = `((SELECT COALESCE(SUM(qty*unit_price),0) FROM order_items WHERE order_id=o.id) + ${charges})`;
   check('收款不超过订单金额', all(`SELECT o.order_no, ${orderAmt} amt, (SELECT SUM(amount) FROM receipts WHERE order_id=o.id) rec FROM orders o WHERE rec > amt + ${EPS}`));
   check('销项开票不超过订单金额', all(`SELECT o.order_no, ${orderAmt} amt, (SELECT SUM(amount) FROM sales_invoices WHERE order_id=o.id) inv FROM orders o WHERE inv > amt + ${EPS}`));
   const poAmt = '(SELECT COALESCE(SUM(qty*price),0) FROM purchase_items WHERE po_id=p.id)';

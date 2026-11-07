@@ -20,7 +20,7 @@ const PROCESSES = ['制坯', '上釉', '烧制', '彩绘', '包装'];
 function receivableRows(ctx) {
   const own = ctx.user.scope === 'own' ? 'WHERE o.salesman_id=' + Number(ctx.user.employee_id || -1) : '';
   const rows = ctx.db.prepare(`SELECT o.id, o.order_no, o.currency, o.rate, o.status, o.invoice_due_days, c.name customer_name, c.country, e.name salesman_name,
-      (SELECT ROUND(COALESCE(SUM(qty*unit_price),0),2) FROM order_items WHERE order_id=o.id) amount,
+      ROUND((SELECT COALESCE(SUM(qty*unit_price),0) FROM order_items WHERE order_id=o.id) + (SELECT COALESCE(SUM(CASE WHEN kind='减' THEN -amount ELSE amount END),0) FROM order_charges WHERE order_id=o.id),2) amount,
       (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM receipts WHERE order_id=o.id) received,
       (SELECT ROUND(COALESCE(SUM(amount_cny),0),2) FROM receipts WHERE order_id=o.id) received_cny,
       (SELECT ROUND(COALESCE(SUM(fx_gain),0),2) FROM receipts WHERE order_id=o.id) fx_gain,

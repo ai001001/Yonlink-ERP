@@ -67,7 +67,11 @@
       <td style="min-width:130px"><select data-f="factory_id" ${dis}>${optHtml(suppliers, it.factory_id)}</select></td>
       <td style="width:90px"><input data-f="cost_cny" type="number" step="any" value="${esc(it.cost_cny)}" placeholder="自动" ${dis}></td>
       <td style="width:80px"><input data-f="craft_add" type="number" step="any" value="${esc(it.craft_add || 0)}" ${dis}></td>
+      <td style="width:76px"><input data-f="profit_rate" type="number" step="any" value="${esc(it.profit_rate ?? '')}" placeholder="默认" title="本行利润率%，空=整单目标利润率" ${dis}></td>
       <td style="width:90px"><input data-f="price" type="number" step="any" value="${esc(it.price)}" ${dis}></td>
+      <td style="width:46px;text-align:center"><input data-f="price_locked" type="checkbox" title="锁定单价：保存时不重算，按单价反算利润率" ${Number(it.price_locked) ? 'checked' : ''} ${dis}></td>
+      <td class="num" data-v="unit_cost">${it.unit_cost !== undefined && it.unit_cost !== null ? money(it.unit_cost) : ''}</td>
+      <td class="num" data-v="actual">${it.actual_profit_rate !== undefined && it.actual_profit_rate !== null ? `${it.actual_profit_rate}%` : ''}</td>
       <td style="width:110px"><input data-f="new_item_no" value="${esc(it.new_item_no)}" placeholder="改新货号" ${dis}></td>
       <td style="min-width:170px"><textarea data-f="revise_req" rows="1" placeholder="造型/尺寸/浮雕/颜色/效果变更" ${dis}>${esc(it.revise_req)}</textarea></td>
       <td>${editable ? '<button class="btn small danger" data-rm type="button">删</button>' : ''}</td></tr>`;
@@ -80,19 +84,23 @@
           <label><span class="req">币种</span><select name="currency" ${dis}>${optHtml(currencies, q.currency, false)}</select></label>
           <label><span class="req">贸易术语</span><select name="term" ${dis}>${optHtml(terms, q.term, false)}</select></label>
           <label><span>汇率（空=取最新汇率）</span><input name="rate" type="number" step="any" value="${esc(q.rate)}" ${dis}></label>
-          <label><span>目标利润率%</span><input name="profit_rate" type="number" step="any" value="${esc(q.profit_rate)}" ${dis}></label>
+          <label><span>换汇成本（空=按汇率）</span><input name="fx_cost" type="number" step="any" value="${esc(q.fx_cost ?? '')}" placeholder="例如 6.5" ${dis}></label>
+          <label><span>目标利润率%（各行默认）</span><input name="profit_rate" type="number" step="any" value="${esc(q.profit_rate)}" ${dis}></label>
+          <label><span>费用分摊方式</span><select name="fee_alloc" ${dis}>${optHtml(['按数量', '按体积'], q.fee_alloc || '按数量', false)}</select></label>
           <label><span>物流费¥（分摊）</span><input name="freight" type="number" step="any" value="${esc(q.freight)}" ${dis}></label>
           <label><span>报关费¥（分摊）</span><input name="customs_fee" type="number" step="any" value="${esc(q.customs_fee)}" ${dis}></label>
           <label><span>有效期至</span><input name="valid_until" type="date" value="${esc(q.valid_until)}" ${dis}></label>
           <label class="wide"><span>备注</span><input name="remark" value="${esc(q.remark)}" ${dis}></label>
         </form>
-        ${editable ? '<label class="small" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="autoPrice" checked> 保存时按「(成本+工艺加价+物流报关分摊)×(1+利润率)÷汇率」自动计算单价（取消勾选可手动微调单价）</label>' : ''}
+        ${editable ? '<label class="small" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="autoPrice" checked> 自动计价：单价 =（成本+工艺加价+物流报关分摊）÷ 换汇成本 ×（1+利润率）。修改单价会自动锁定该行并反算利润率；锁定的行不重算</label>' : ''}
+        ${q.fee_fallback ? '<div class="alert warn" style="margin-top:8px"><span>部分货号缺少装箱数或外箱尺寸，费用已改为按数量分摊。</span></div>' : ''}
       </div>
-      <div class="panel"><div class="panel-head"><h3>报价产品明细 ${designer ? '<span class="muted small">（仅显示本人设计样品）</span>' : ''}</h3>${editable ? '<button class="btn" id="addItem" type="button">＋ 添加产品</button>' : ''}</div>
-        <div class="table-wrap items-table"><table><thead><tr><th>样品货号</th><th>描述</th><th>数量</th><th>生产厂家</th><th>成本¥</th><th>工艺加价¥</th><th>单价(外币)</th><th>改新货号</th><th>详细改样要求</th><th></th></tr></thead>
+      <div class="panel"><div class="panel-head"><h3>报价产品明细 ${designer ? '<span class="muted small">（仅显示本人设计样品）</span>' : ''}</h3>${editable ? '<span class="toolbar"><button class="btn" id="histItem" type="button">历史记录导入</button><button class="btn" id="addItem" type="button">＋ 添加产品</button></span>' : ''}</div>
+        <div class="table-wrap items-table"><table><thead><tr><th>样品货号</th><th>描述</th><th>数量</th><th>生产厂家</th><th>成本¥</th><th>工艺加价¥</th><th>利润率%</th><th>单价(外币)</th><th>锁定</th><th class="num">报价基准¥</th><th class="num">实际利润率</th><th>改新货号</th><th>详细改样要求</th><th></th></tr></thead>
         <tbody id="items">${q.items.map(itemRow).join('')}</tbody></table></div>
+        ${editable ? '<div class="muted small" id="calcInfo" style="margin-top:6px"></div>' : ''}
         ${isNew ? '' : `<div class="kv" style="margin-top:10px"><div><b>总数量</b><span>${q.total_qty}</span></div><div><b>报价总额</b><span>${money(q.amount)} ${esc(q.currency)}</span></div>
-          ${designer ? '' : `<div><b>预估利润</b><span>¥${money(q.est_profit)}</span></div>`}<div><b>汇率</b><span>${esc(q.rate)}</span></div><div><b>业务员</b><span>${esc(q.salesman_name)}</span></div></div>`}
+          ${designer ? '' : `<div><b>预估利润</b><span>¥${money(q.est_profit)}</span></div>`}<div><b>汇率</b><span>${esc(q.rate)}</span></div>${q.fx_cost ? `<div><b>换汇成本</b><span>${esc(q.fx_cost)}</span></div>` : ''}<div><b>费用分摊</b><span>${esc(q.fee_alloc_used || q.fee_alloc || '按数量')}</span></div><div><b>业务员</b><span>${esc(q.salesman_name)}</span></div></div>`}
       </div>
       ${isNew || designer ? '' : `<div class="panel"><div class="panel-head"><h3>工厂询价单（报价单号-厂家名称）</h3><div class="toolbar" id="inqActions"></div></div>
         ${tableHtml(['询价单号', '厂家', '状态', '发送时间', '回价日期', '有效期'], q.inquiries.map((i) => [`<a href="#/inquiry/${i.id}">${esc(i.inquiry_no)}</a>`, esc(i.supplier_name), tag(i.status), esc(i.sent_at), esc(i.reply_date), esc(i.valid_until)]))}</div>`}`;
@@ -112,19 +120,73 @@
         };
       });
     };
-    bindRows();
-    const ai = main.querySelector('#addItem');
-    if (ai) ai.onclick = () => { tbody.insertAdjacentHTML('beforeend', itemRow({})); bindRows(); };
     const collect = () => {
       const h = Object.fromEntries([...main.querySelectorAll('#hdr [name]')].map((el) => [el.name, el.value]));
       h.items = [...tbody.querySelectorAll('tr')].map((tr) => {
         const it = { id: tr.dataset.id ? Number(tr.dataset.id) : undefined };
-        tr.querySelectorAll('[data-f]').forEach((el) => { it[el.dataset.f] = el.value; });
+        tr.querySelectorAll('[data-f]').forEach((el) => { it[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value; });
         return it;
       }).filter((it) => it.sample_id);
       h.auto_price = main.querySelector('#autoPrice') ? main.querySelector('#autoPrice').checked : true;
       return h;
     };
+    // 试算：利润率与单价互算（亿星）/ live calculation: profit rate ⇄ unit price (as in 亿星)
+    let calcTimer = null;
+    let calcSeq = 0;
+    const recalc = () => {
+      clearTimeout(calcTimer);
+      calcTimer = setTimeout(async () => {
+        const body = collect();
+        if (!body.items.length) return;
+        const seq = ++calcSeq;
+        try {
+          const r = await post('/api/quotes/calc', body);
+          if (seq !== calcSeq) return;
+          const trs = [...tbody.querySelectorAll('tr')].filter((tr) => tr.querySelector('[data-f="sample_id"]').value);
+          trs.forEach((tr, k) => {
+            const it = r.items[k];
+            if (!it) return;
+            const pr = tr.querySelector('[data-f="price"]');
+            if (!tr.querySelector('[data-f="price_locked"]').checked && document.activeElement !== pr) pr.value = it.price;
+            tr.querySelector('[data-v="unit_cost"]').textContent = money(it.unit_cost);
+            tr.querySelector('[data-v="actual"]').textContent = it.actual_profit_rate === null ? '' : `${it.actual_profit_rate}%`;
+          });
+          const info = main.querySelector('#calcInfo');
+          if (info) info.textContent = `试算：总数量 ${r.total_qty}，报价总额 ${money(r.amount)} ${body.currency}，预估利润 ¥${money(r.profit)}，计价除数 ${r.divisor}（${body.fx_cost ? '换汇成本' : '汇率'}），费用${r.fee_alloc}分摊${r.fee_fallback ? '（部分货号缺装箱资料，已改按数量）' : ''}`;
+        } catch (e) { /* 试算失败不影响编辑 / ignore calc errors while editing */ }
+      }, 350);
+    };
+    if (editable) {
+      main.querySelector('#hdr').addEventListener('input', recalc);
+      main.querySelector('#hdr').addEventListener('change', recalc);
+      tbody.addEventListener('input', (e) => {
+        // 手改单价 → 自动锁定该行；改利润率 → 解除锁定 / typing a price locks the line; typing a rate unlocks it
+        const tr = e.target.closest('tr');
+        if (e.target.dataset.f === 'price') tr.querySelector('[data-f="price_locked"]').checked = true;
+        if (e.target.dataset.f === 'profit_rate') tr.querySelector('[data-f="price_locked"]').checked = false;
+        recalc();
+      });
+      tbody.addEventListener('change', recalc);
+      const ap = main.querySelector('#autoPrice');
+      if (ap) ap.onchange = recalc;
+    }
+    bindRows();
+    const ai = main.querySelector('#addItem');
+    if (ai) ai.onclick = () => { tbody.insertAdjacentHTML('beforeend', itemRow({})); bindRows(); };
+    const hi = main.querySelector('#histItem');
+    if (hi) {
+      hi.onclick = () => {
+        const cid = main.querySelector('#hdr [name="customer_id"]').value;
+        if (!cid) { toast('请先选择客户', 'error'); return; }
+        ERP.historyPicker(cid, (rows) => {
+          for (const r of rows) {
+            tbody.insertAdjacentHTML('beforeend', itemRow({ sample_id: r.sample_id, description: r.description, qty: r.qty, price: r.price, profit_rate: r.profit_rate, cost_cny: r.cost_cny, craft_add: r.craft_add, factory_id: r.factory_id, price_locked: 1 }));
+          }
+          bindRows();
+          recalc();
+        });
+      };
+    }
     const acts = main.querySelector('#actions');
     const btn = (text, cls, fn) => { const b = document.createElement('button'); b.className = 'btn ' + cls; b.textContent = text; b.onclick = async () => { try { await fn(); } catch (e) { toast(e.message, 'error'); } }; acts.appendChild(b); };
     if (editable) {
@@ -141,6 +203,28 @@
       if (can('quote', 'edit') && q.status === '已审批') btn('标记已发客户', '', async () => { await post(`/api/quotes/${id}/status`, { status: '已发客户' }); ERP.navigate(); });
       if (can('order', 'add') && ['已审批', '已发客户'].includes(q.status)) {
         btn('转为订单', 'primary', async () => { if (!(await confirmBox('确认客户已下单，将报价单转为销售订单？'))) return; const r = await post(`/api/quotes/${id}/to-order`); toast(`已生成订单 ${r.order_no}`, 'ok'); location.hash = '#/order/' + r.id; });
+      }
+      if (can('quote', 'add')) {
+        btn('复制为新报价', '', async () => {
+          const r = await post(`/api/quotes/${id}/copy`);
+          toast(`已复制为新报价 ${r.quote_no}`, 'ok');
+          location.hash = '#/quote/' + r.id;
+        });
+      }
+      if (can('sendsample', 'add')) {
+        btn('另存为送样单', '', () => modal({
+          title: '另存为送样单：选择要寄样的货号',
+          body: q.items.map((i) => `<label class="inline" style="display:flex;margin:4px 0"><input type="checkbox" value="${i.id}" checked> ${esc(i.item_no)} ${esc(i.description)}${i.new_item_no ? `（改样新货号 ${esc(i.new_item_no)}）` : ''}</label>`).join(''),
+          buttons: [{
+            text: '生成送样单', cls: 'primary', onClick: async (m) => {
+              const ids = [...m.el.querySelectorAll('input[type=checkbox]:checked')].map((c) => Number(c.value));
+              const r = await post(`/api/quotes/${id}/to-send`, { item_ids: ids });
+              m.close();
+              toast(`已生成送样单 ${r.send_no}`, 'ok');
+              location.hash = '#/send/' + r.id;
+            },
+          }],
+        }));
       }
       if (can('quote', 'print')) btn('打印报价单', '', () => printQuote(q));
       if (can('quote', 'export')) {
@@ -164,6 +248,35 @@
       }
     }
   });
+
+  /**
+   * 历史记录导入：列出客户以往报价/订单明细，勾选后带入（亿星“历史记录导入/快速翻单”）
+   * History picker: list a customer's past quote/order lines and return the selected ones.
+   * @param {number|string} customerId 客户ID / customer id
+   * @param {(rows:object[])=>void} onPick 选中后的回调 / callback with selected rows
+   */
+  ERP.historyPicker = async (customerId, onPick) => {
+    const { rows } = await get(`/api/customers/${customerId}/history-items`);
+    const usable = rows.filter((r) => r.sample_status !== '已锁定');
+    const m = modal({
+      title: '历史记录导入（勾选要带入的明细，单价沿用历史价格）', wide: true,
+      body: `<input class="search" id="hq" placeholder="按货号/单号筛选" style="margin-bottom:8px">
+        ${usable.length < rows.length ? `<div class="alert warn"><span>${rows.length - usable.length} 条明细的旧货号已锁定，不能再使用，已隐藏。</span></div>` : ''}
+        ${tableHtml(['', '来源', '单号', '日期', '货号', '描述', '数量', '单价', '币种'], usable.map((r, i) => [`<input type="checkbox" data-h="${i}">`, esc(r.src), esc(r.doc_no), esc(r.doc_date), esc(r.item_no), esc(r.description), r.qty, money(r.price), esc(r.currency)]))}`,
+      buttons: [{
+        text: '带入所选明细', cls: 'primary', onClick: async (mm) => {
+          const picked = [...mm.el.querySelectorAll('[data-h]:checked')].map((c) => usable[Number(c.dataset.h)]);
+          if (!picked.length) throw new Error('请至少勾选一条明细');
+          mm.close();
+          onPick(picked);
+        },
+      }],
+    });
+    m.el.querySelector('#hq').oninput = (e) => {
+      const t = e.target.value.trim().toLowerCase();
+      m.el.querySelectorAll('tbody tr').forEach((tr) => { tr.style.display = !t || tr.textContent.toLowerCase().includes(t) ? '' : 'none'; });
+    };
+  };
 
   /**
    * 打印报价单 / Print a quotation.

@@ -123,7 +123,7 @@ const REPORTS = {
   finance: {
     title: '财务口径统计',
     build(db) {
-      const ar = db.prepare(`SELECT o.currency, ROUND(SUM((SELECT COALESCE(SUM(qty*unit_price),0) FROM order_items WHERE order_id=o.id)),2) amt,
+      const ar = db.prepare(`SELECT o.currency, ROUND(SUM((SELECT COALESCE(SUM(qty*unit_price),0) FROM order_items WHERE order_id=o.id) + (SELECT COALESCE(SUM(CASE WHEN kind='减' THEN -amount ELSE amount END),0) FROM order_charges WHERE order_id=o.id)),2) amt,
           ROUND(SUM((SELECT COALESCE(SUM(amount),0) FROM receipts WHERE order_id=o.id)),2) rec,
           ROUND(SUM((SELECT COALESCE(SUM(fx_gain),0) FROM receipts WHERE order_id=o.id)),2) fx,
           ROUND(SUM((SELECT COALESCE(SUM(amount),0) FROM sales_invoices WHERE order_id=o.id)),2) inv

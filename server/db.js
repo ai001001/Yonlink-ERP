@@ -131,6 +131,7 @@ CREATE TABLE IF NOT EXISTS customer_contacts (id INTEGER PRIMARY KEY, customer_i
 CREATE TABLE IF NOT EXISTS customer_marks (id INTEGER PRIMARY KEY, customer_id INTEGER, name TEXT, front_mark TEXT, side_mark TEXT, inner_mark TEXT, is_default TEXT DEFAULT '否', remark TEXT);
 CREATE TABLE IF NOT EXISTS customer_forwarders (id INTEGER PRIMARY KEY, customer_id INTEGER, agency_id INTEGER, name TEXT, contact TEXT, phone TEXT, email TEXT, port TEXT, remark TEXT);
 CREATE TABLE IF NOT EXISTS customer_banks (id INTEGER PRIMARY KEY, customer_id INTEGER, bank_name TEXT, account_name TEXT, account_no TEXT, swift TEXT, currency TEXT, bank_address TEXT, remark TEXT);
+CREATE TABLE IF NOT EXISTS order_charges (id INTEGER PRIMARY KEY, order_id INTEGER, kind TEXT, name TEXT, amount REAL, remark TEXT, user_name TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
 CREATE TABLE IF NOT EXISTS user_prefs (user_id INTEGER, pkey TEXT, value TEXT, updated_at TEXT DEFAULT (datetime('now','localtime')), PRIMARY KEY (user_id, pkey));
 CREATE TABLE IF NOT EXISTS handovers (id INTEGER PRIMARY KEY, from_emp_id INTEGER, to_emp_id INTEGER, from_name TEXT, to_name TEXT, scopes TEXT, counts TEXT, reason TEXT, user_name TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
 CREATE TABLE IF NOT EXISTS import_batches (id INTEGER PRIMARY KEY, batch_no TEXT UNIQUE, entity TEXT, source TEXT DEFAULT '亿星', file_name TEXT, mode TEXT, total INTEGER DEFAULT 0,
@@ -365,6 +366,28 @@ const ADDED_COLUMNS = [
   ['samples', 'desc_cn', 'TEXT'],
   ['samples', 'desc_en', 'TEXT'],
   ['samples', 'use_status', "TEXT DEFAULT '启用'"],
+  // 批次2：报价按行利润率、单价锁定、换汇成本、费用分摊方式 / batch 2: quote pricing
+  ['quotes', 'fx_cost', 'REAL'],
+  ['quotes', 'fee_alloc', "TEXT DEFAULT '按数量'"],
+  ['quote_items', 'profit_rate', 'REAL'],
+  ['quote_items', 'price_locked', 'INTEGER DEFAULT 0'],
+  // 批次2：订单概要/合同条款/唛头 / batch 2: order summary, contract terms, shipping marks
+  ['orders', 'po_no', 'TEXT'],
+  ['orders', 'pay_terms', 'TEXT'],
+  ['orders', 'deposit_rate', 'REAL'],
+  ['orders', 'port_loading', 'TEXT'],
+  ['orders', 'port_dest', 'TEXT'],
+  ['orders', 'transport', 'TEXT'],
+  ['orders', 'partial_shipment', 'TEXT'],
+  ['orders', 'transshipment', 'TEXT'],
+  ['orders', 'insurance', 'TEXT'],
+  ['orders', 'pi_no', 'TEXT'],
+  ['orders', 'sign_place', 'TEXT'],
+  ['orders', 'contract_terms', 'TEXT'],
+  ['orders', 'factory_terms', 'TEXT'],
+  ['orders', 'front_mark', 'TEXT'],
+  ['orders', 'side_mark', 'TEXT'],
+  ['orders', 'inner_mark', 'TEXT'],
 ];
 
 /** 新增系统参数默认值 / Default values for settings added after v1 */

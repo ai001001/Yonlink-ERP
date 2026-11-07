@@ -13,6 +13,32 @@ const HEADER_KEYS = { delivery_date: '交期', package_req: '包装要求', craf
 /** 订单明细关键字段 / Key item fields watched by risk control */
 const ITEM_KEYS = { qty: '数量', craft: '工艺', spec: '规格', package: '包装' };
 
+/** 订单概要/合同条款/唛头字段（非风控关键字段）/ order summary, contract-term and shipping-mark fields (not risk-controlled) */
+const SUMMARY_FIELDS = ['po_no', 'pay_terms', 'deposit_rate', 'port_loading', 'port_dest', 'transport', 'partial_shipment', 'transshipment', 'insurance',
+  'pi_no', 'sign_place', 'contract_terms', 'factory_terms', 'front_mark', 'side_mark', 'inner_mark'];
+
+/**
+ * 订单加减项合计（加为正、减为负）/ Net of order additions (+) and deductions (−).
+ * @param {object} db
+ * @param {number} orderId
+ * @returns {number}
+ */
+function chargesTotal(db, orderId) {
+  return round(db.prepare("SELECT COALESCE(SUM(CASE WHEN kind='减' THEN -amount ELSE amount END),0) v FROM order_charges WHERE order_id=?").get(orderId).v);
+}
+
+/**
+ * 新订单从客户档案带出默认资料（付款方式、目的港、默认唛头）/ Defaults for a new order taken from the customer record.
+ * @param {object} db
+ * @param {number} customerId
+ * @returns {object}
+ */
+function customerDefaults(db, customerId) {
+  const c = db.prepare('SELECT pay_terms, dest_port FROM customers WHERE id=?').get(customerId) || {};
+  const m = db.prepare("SELECT front_mark, side_mark, inner_mark FROM customer_marks WHERE customer_id=? ORDER BY is_default='是' DESC, id LIMIT 1").get(customerId) || {};
+  return { pay_terms: c.pay_terms || null, port_dest: c.dest_port || null, front_mark: m.front_mark || null, side_mark: m.side_mark || null, inner_mark: m.inner_mark || null };
+}
+
 /** 部门 → 处理权限 / department → permission needed to handle a change task */
 const DEPT_PERM = { 采购: ['purchase', 'edit'], 生产: ['production', 'edit'], 财务: ['receivable', 'edit'], 业务: ['order', 'edit'] };
 
@@ -66,8 +92,13 @@ function getOrder(ctx, id) {
       (SELECT COALESCE(SUM(si.qty),0) FROM shipment_items si JOIN shipments sh ON sh.id=si.shipment_id WHERE si.order_item_id=i.id AND sh.status='已出运') departed_qty,
       (SELECT COALESCE(SUM(r.good_qty),0) FROM production_reports r JOIN productions p ON p.id=r.production_id WHERE p.order_item_id=i.id AND r.process='包装') produced_qty
     FROM order_items i LEFT JOIN samples s ON s.id=i.sample_id LEFT JOIN employees d ON d.id=s.designer_id WHERE i.order_id=? ORDER BY i.id`).all(o.id));
-  o.amount = round(o.items.reduce((s, i) => s + num(i.qty) * num(i.unit_price), 0));
-  if (ctx.user.scope === 'designer') return o;
+  // 货款 = Σ数量×单价；合同总额 = 货款 + 加减项（应收、收款、开票均以合同总额为准）
+  // goods = Σ qty × price; contract total = goods + charges (basis for receivables, receipts and invoices)
+  o.goods_amount = round(o.items.reduce((s, i) => s + num(i.qty) * num(i.unit_price), 0));
+  if (ctx.user.scope === 'designer') { o.amount = o.goods_amount; return o; }
+  o.charges = db.prepare('SELECT * FROM order_charges WHERE order_id=? ORDER BY id').all(o.id);
+  o.charges_amount = chargesTotal(db, o.id);
+  o.amount = round(o.goods_amount + o.charges_amount);
   o.changes = db.prepare('SELECT * FROM order_changes WHERE order_id=? ORDER BY id DESC').all(o.id);
   for (const c of o.changes) {
     c.diff = JSON.parse(c.diff || '[]');
@@ -87,7 +118,42 @@ function getOrder(ctx, id) {
   o.received = round(rec.received);
   o.invoiced = round(inv.invoiced);
   o.cost = orderCost(db, o);
+  o.estimate = orderEstimate(db, o);
   return o;
+}
+
+/**
+ * 订单效益测算（预估）：按报价单的报价基准或样品成本估算成本，扣除客户佣金
+ * Order profit estimate: cost from the source quote's cost base (or sample cost), minus customer commission.
+ * @param {object} db
+ * @param {object} o 订单（含明细、合同总额、汇率）/ order with items, total and rate
+ * @returns {object}
+ */
+function orderEstimate(db, o) {
+  const fromQuote = new Map();
+  if (o.quote_id) {
+    const q = db.prepare('SELECT * FROM quotes WHERE id=?').get(o.quote_id);
+    if (q) {
+      const qi = db.prepare(`SELECT i.*, s.pcs_per_carton, s.cbm, s.outer_l, s.outer_w, s.outer_h FROM quote_items i LEFT JOIN samples s ON s.id=i.sample_id WHERE i.quote_id=? ORDER BY i.id`).all(q.id);
+      const { priceQuote } = require('./sales');
+      priceQuote(q, qi, false).items.forEach((i) => {
+        fromQuote.set(i.item_no, i.unit_cost);
+        if (i.new_item_no) fromQuote.set(i.new_item_no, i.unit_cost);
+      });
+    }
+  }
+  const lines = o.items.map((i) => {
+    const s = db.prepare('SELECT factory_price, material_cost, labor_cost FROM samples WHERE id=?').get(i.sample_id) || {};
+    const fromSample = num(s.factory_price) > 0 ? num(s.factory_price) : num(s.material_cost) + num(s.labor_cost);
+    const unit = fromQuote.has(i.item_no) ? fromQuote.get(i.item_no) : fromSample;
+    return { item_no: i.item_no, qty: i.qty, unit_cost: round(unit, 4), source: fromQuote.has(i.item_no) ? '报价基准' : (num(s.factory_price) > 0 ? '样品工厂报价' : '样品材料+人工'), cost: round(unit * num(i.qty)) };
+  });
+  const revenue = round(num(o.amount) * num(o.rate));
+  const cost = round(lines.reduce((a, l) => a + l.cost, 0));
+  const c = db.prepare('SELECT commission_rate FROM customers WHERE id=?').get(o.customer_id) || {};
+  const commission = round(revenue * num(c.commission_rate) / 100);
+  const profit = round(revenue - cost - commission);
+  return { revenue_cny: revenue, cost, commission, commission_rate: num(c.commission_rate), profit, profit_rate: revenue > 0 ? round(profit / revenue * 100, 2) : null, lines };
 }
 
 /**
@@ -161,6 +227,16 @@ function saveOrder(ctx, id) {
     order_date: b.order_date || (old ? old.order_date : today()), delivery_date: b.delivery_date, package_req: b.package_req || '', craft: b.craft || '',
     invoice_due_days: num(b.invoice_due_days) || 30, remark: b.remark || '',
   };
+  const defs = old ? {} : customerDefaults(db, header.customer_id);
+  for (const k of SUMMARY_FIELDS) {
+    let v = b[k] !== undefined ? b[k] : (old ? old[k] : defs[k]);
+    if (v === '' || v === undefined) v = null;
+    if (k === 'deposit_rate' && v !== null) {
+      v = num(v);
+      if (v < 0 || v > 100) throw new HttpError(400, '预收订金比率应在 0～100% 之间');
+    }
+    header[k] = v;
+  }
   const rows = items.map((it) => {
     const prev = old && old.items.find((x) => x.id === Number(it.id));
     const s = prev && prev.sample_id === Number(it.sample_id) ? db.prepare('SELECT * FROM samples WHERE id=?').get(prev.sample_id) : assertSampleUsable(db, Number(it.sample_id), '下单');
@@ -203,7 +279,7 @@ function saveOrder(ctx, id) {
     });
     if (diff.length) {
       const changeNo = nextNo(db, 'CH', 'order_changes', 'change_no');
-      const newAmount = round(rows.reduce((s, i) => s + i.qty * i.unit_price, 0));
+      const newAmount = round(rows.reduce((s, i) => s + i.qty * i.unit_price, 0) + chargesTotal(db, old.id));
       const summary = diff.map((d) => `${d.item_no ? d.item_no + ' ' : ''}${d.field}: ${d.before ?? ''}→${d.after ?? ''}`).join('；');
       const rc = db.prepare('INSERT INTO order_changes(change_no,order_id,diff,reason,risk_level,risk_detail,status,user_name) VALUES(?,?,?,?,?,?,?,?)')
         .run(changeNo, old.id, JSON.stringify(diff), b.change_reason || '', needConfirm ? risk.level : '无',
@@ -271,7 +347,9 @@ function register(r) {
     if (ctx.query.q) { where.push('(o.order_no LIKE ? OR c.name LIKE ? OR EXISTS (SELECT 1 FROM order_items i WHERE i.order_id=o.id AND i.item_no LIKE ?))'); params.push(...Array(3).fill(`%${ctx.query.q}%`)); }
     if (ctx.query.status) { where.push('o.status=?'); params.push(ctx.query.status); }
     return { rows: ctx.db.prepare(`SELECT o.*, c.name customer_name, c.country, e.name salesman_name,
-      (SELECT ROUND(SUM(qty*unit_price),2) FROM order_items WHERE order_id=o.id) amount,
+      ROUND((SELECT COALESCE(SUM(qty*unit_price),0) FROM order_items WHERE order_id=o.id)
+        + (SELECT COALESCE(SUM(CASE WHEN kind='减' THEN -amount ELSE amount END),0) FROM order_charges WHERE order_id=o.id),2) amount,
+      o.po_no,
       (SELECT group_concat(item_no, '、') FROM order_items WHERE order_id=o.id) item_nos,
       (SELECT COUNT(*) FROM change_tasks t WHERE t.order_id=o.id AND t.status='待处理') pending_tasks
       FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN employees e ON e.id=o.salesman_id
@@ -285,6 +363,63 @@ function register(r) {
     const o = getOrder(ctx, ctx.params.id);
     return evaluateRisk(ctx.db, o.id);
   });
+  // ---- 加减项（亿星“加减项”：模具费、样品费、折扣、佣金扣减等）/ order additions & deductions ----
+  r.post('/api/orders/:id/charges', (ctx) => {
+    need(ctx, 'order', 'edit');
+    const o = getOrder(ctx, ctx.params.id);
+    if (ctx.user.scope === 'designer') throw new HttpError(403, '设计师无权修改订单');
+    if (o.status === '已完成') throw new HttpError(409, '订单已完成，不能再登记加减项');
+    const b = ctx.body;
+    required(b, { kind: '加/减', name: '费用名称', amount: '金额' });
+    if (!['加', '减'].includes(b.kind)) throw new HttpError(400, '类型只能是“加”或“减”');
+    const amount = round(num(b.amount));
+    if (!(amount > 0)) throw new HttpError(400, '金额必须大于0');
+    const newTotal = round(o.amount + (b.kind === '减' ? -amount : amount));
+    if (newTotal < o.received - 0.005) throw new HttpError(409, `扣减后合同总额 ${newTotal} 将低于已收款 ${o.received}，不能登记`);
+    if (newTotal < o.invoiced - 0.005) throw new HttpError(409, `扣减后合同总额 ${newTotal} 将低于已开票 ${o.invoiced}，不能登记`);
+    if (newTotal < 0) throw new HttpError(409, '扣减后合同总额不能为负数');
+    const rr = ctx.db.prepare('INSERT INTO order_charges(order_id,kind,name,amount,remark,user_name) VALUES(?,?,?,?,?,?)').run(o.id, b.kind, String(b.name).slice(0, 100), amount, b.remark || '', ctx.user.name);
+    log(ctx, 'order', `订单${b.kind}项`, o.order_no, `${b.name} ${amount} ${o.currency}，合同总额 ${o.amount} → ${newTotal}`);
+    return { id: Number(rr.lastInsertRowid), amount: newTotal };
+  });
+  r.del('/api/orders/:id/charges/:cid', (ctx) => {
+    need(ctx, 'order', 'edit');
+    const o = getOrder(ctx, ctx.params.id);
+    if (ctx.user.scope === 'designer') throw new HttpError(403, '设计师无权修改订单');
+    if (o.status === '已完成') throw new HttpError(409, '订单已完成，不能删除加减项');
+    const c = ctx.db.prepare('SELECT * FROM order_charges WHERE id=? AND order_id=?').get(ctx.params.cid, o.id);
+    if (!c) throw new HttpError(404, '加减项不存在');
+    const newTotal = round(o.amount - (c.kind === '减' ? -c.amount : c.amount));
+    if (newTotal < o.received - 0.005 || newTotal < o.invoiced - 0.005) throw new HttpError(409, `删除后合同总额 ${newTotal} 将低于已收款/已开票金额，不能删除`);
+    ctx.db.prepare('DELETE FROM order_charges WHERE id=?').run(c.id);
+    log(ctx, 'order', `删除订单${c.kind}项`, o.order_no, `${c.name} ${c.amount}`);
+    return { ok: true, amount: newTotal };
+  });
+
+  // ---- 复制为新订单（历史翻单）/ copy as a new order (repeat order) ----
+  r.post('/api/orders/:id/copy', (ctx) => {
+    need(ctx, 'order', 'add');
+    if (ctx.user.scope === 'designer') throw new HttpError(403, '设计师无权新建订单');
+    const o = getOrder(ctx, ctx.params.id);
+    const items = o.items.map((i) => {
+      let sid = i.sample_id;
+      if (i.sample_status === '已锁定') {
+        const ns = ctx.db.prepare("SELECT id FROM samples WHERE parent_no=? AND status<>'已锁定' ORDER BY id DESC").get(i.item_no);
+        if (!ns) throw new HttpError(409, `货号 ${i.item_no} 已锁定且没有可用的新货号，无法翻单`);
+        sid = ns.id;
+      }
+      return { sample_id: sid, description: i.description, qty: i.qty, unit_price: i.unit_price, craft: i.craft, spec: i.spec, package: i.package };
+    });
+    const body = {
+      customer_id: o.customer_id, currency: o.currency, term: o.term, delivery_date: ctx.body.delivery_date || today(60), package_req: o.package_req, craft: o.craft,
+      invoice_due_days: o.invoice_due_days, remark: `翻单自 ${o.order_no}${o.remark ? '；' + o.remark : ''}`, items,
+      ...Object.fromEntries(SUMMARY_FIELDS.filter((k) => k !== 'po_no' && k !== 'pi_no').map((k) => [k, o[k]])),
+    };
+    const n = saveOrder({ ...ctx, body });
+    log(ctx, 'order', '翻单（复制订单）', n.order_no, `来源 ${o.order_no}`);
+    return n;
+  });
+
   r.post('/api/orders/:id/status', (ctx) => {
     need(ctx, 'order', 'edit');
     const o = getOrder(ctx, ctx.params.id);
@@ -395,4 +530,4 @@ function register(r) {
   });
 }
 
-module.exports = { register, getOrder, evaluateRisk, assertNotLocked, orderCost, refreshOrderStatus };
+module.exports = { register, getOrder, evaluateRisk, assertNotLocked, orderCost, refreshOrderStatus, customerDefaults, chargesTotal, SUMMARY_FIELDS };
