@@ -24,14 +24,16 @@ function receivableRows(ctx) {
       (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM receipts WHERE order_id=o.id) received,
       (SELECT ROUND(COALESCE(SUM(amount_cny),0),2) FROM receipts WHERE order_id=o.id) received_cny,
       (SELECT ROUND(COALESCE(SUM(fx_gain),0),2) FROM receipts WHERE order_id=o.id) fx_gain,
+      (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM ar_writeoffs WHERE order_id=o.id) written_off,
       (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM sales_invoices WHERE order_id=o.id) invoiced,
       (SELECT MIN(ship_date) FROM shipments WHERE order_id=o.id AND status='已出运') first_ship_date
     FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN employees e ON e.id=o.salesman_id ${own} ORDER BY o.id DESC`).all();
   const now = new Date(today()).getTime();
   for (const r of rows) {
-    r.unreceived = round(r.amount - r.received);
+    // 未收 = 合同总额 − 实收 − 销账 / outstanding = total − received − written off
+    r.unreceived = round(r.amount - r.received - r.written_off);
     r.uninvoiced = round(r.amount - r.invoiced);
-    r.receive_status = r.received <= 0 ? '未收款' : (r.unreceived > 0.005 ? '部分收款' : '已收齐');
+    r.receive_status = r.received <= 0 && r.written_off <= 0 ? '未收款' : (r.unreceived > 0.005 ? '部分收款' : '已收齐');
     r.overdue_days = 0;
     r.invoice_overdue = false;
     if (r.first_ship_date && r.uninvoiced > 0.005) {
@@ -41,6 +43,28 @@ function receivableRows(ctx) {
     }
   }
   return rows;
+}
+
+/**
+ * 登记订单收款（校验未收余额，计算人民币与汇兑损益）/ Record a receipt against an order.
+ * @param {object} ctx
+ * @param {object} b {order_id, type:'预收'|'尾款'|'分期', amount, rate?, receipt_date?, voucher?, remark?}
+ * @returns {{id:number}}
+ */
+function addReceipt(ctx, b) {
+  if (!['预收', '尾款', '分期'].includes(b.type)) throw new HttpError(400, '收款类型无效');
+  const o = ctx.db.prepare('SELECT * FROM orders WHERE id=?').get(b.order_id);
+  if (!o) throw new HttpError(404, '订单不存在');
+  const amount = round(num(b.amount));
+  if (amount <= 0) throw new HttpError(400, '收款金额必须大于0');
+  const row = receivableRows({ ...ctx, user: { ...ctx.user, scope: 'all' } }).find((x) => x.id === o.id);
+  if (amount > row.unreceived + 0.005) throw new HttpError(409, `收款金额超出订单${o.order_no}未收余额（未收 ${row.unreceived} ${o.currency}）`);
+  const cur = ctx.db.prepare('SELECT rate FROM currencies WHERE code=?').get(o.currency);
+  const rate = num(b.rate) || (cur ? cur.rate : o.rate);
+  const rr = ctx.db.prepare('INSERT INTO receipts(order_id,type,amount,currency,rate,amount_cny,fx_gain,receipt_date,voucher,remark) VALUES(?,?,?,?,?,?,?,?,?,?)')
+    .run(o.id, b.type, amount, o.currency, rate, round(amount * rate), round(amount * (rate - num(o.rate))), b.receipt_date || today(), b.voucher || '', b.remark || '');
+  log(ctx, 'receivable', `登记${b.type}`, o.order_no, `${amount} ${o.currency} @${rate}${b.voucher ? ' 凭证' + b.voucher : ''}`);
+  return { id: Number(rr.lastInsertRowid) };
 }
 
 /**
@@ -115,21 +139,8 @@ function register(r) {
   });
   r.post('/api/receipts', (ctx) => {
     need(ctx, 'receivable', 'add');
-    const b = ctx.body;
-    required(b, { order_id: '订单', type: '收款类型', amount: '收款金额' });
-    if (!['预收', '尾款', '分期'].includes(b.type)) throw new HttpError(400, '收款类型无效');
-    const o = ctx.db.prepare('SELECT * FROM orders WHERE id=?').get(b.order_id);
-    if (!o) throw new HttpError(404, '订单不存在');
-    const amount = num(b.amount);
-    if (amount <= 0) throw new HttpError(400, '收款金额必须大于0');
-    const row = receivableRows({ ...ctx, user: { ...ctx.user, scope: 'all' } }).find((x) => x.id === o.id);
-    if (amount > row.unreceived + 0.005) throw new HttpError(409, `收款金额超出未收余额（未收 ${row.unreceived} ${o.currency}）`);
-    const cur = ctx.db.prepare('SELECT rate FROM currencies WHERE code=?').get(o.currency);
-    const rate = num(b.rate) || (cur ? cur.rate : o.rate);
-    const rr = ctx.db.prepare('INSERT INTO receipts(order_id,type,amount,currency,rate,amount_cny,fx_gain,receipt_date,voucher,remark) VALUES(?,?,?,?,?,?,?,?,?,?)')
-      .run(o.id, b.type, amount, o.currency, rate, round(amount * rate), round(amount * (rate - num(o.rate))), b.receipt_date || today(), b.voucher || '', b.remark || '');
-    log(ctx, 'receivable', `登记${b.type}`, o.order_no, `${amount} ${o.currency} @${rate}`);
-    return { id: Number(rr.lastInsertRowid) };
+    required(ctx.body, { order_id: '订单', type: '收款类型', amount: '收款金额' });
+    return addReceipt(ctx, ctx.body);
   });
   r.post('/api/sales-invoices', (ctx) => {
     need(ctx, 'receivable', 'add');
@@ -409,4 +420,4 @@ function register(r) {
   });
 }
 
-module.exports = { register, receivableRows, productionRows, PROCESSES };
+module.exports = { register, receivableRows, productionRows, PROCESSES, addReceipt };

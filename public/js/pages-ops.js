@@ -146,7 +146,7 @@
           ${c.reason ? `<div class="small muted">原因：${esc(c.reason)}</div>` : ''}
           ${c.tasks.length ? `<div style="margin-top:8px">${tasksHtml(c)}</div>` : ''}</div>`).join('') : '<div class="empty">暂无变更</div>'}</div>
       <div class="panel"><div class="panel-head"><h3>出货与验货</h3>${can('order', 'edit') && !o.risk_lock && !['已出货', '已完成'].includes(o.status) ? '<button class="btn" id="newShip">＋ 安排出货</button>' : ''}</div>
-        ${tableHtml(['出货单', '出货日期', '起运/目的港', '货代', '柜号', '报关单号', '明细', '验货', '状态', ''], o.shipments.map((s) => [esc(s.ship_no), esc(s.ship_date), `${esc(s.port)} → ${esc(s.dest_port)}`, esc(s.forwarder_name), esc(s.container_no), esc(s.customs_no),
+        ${tableHtml(['出货单', '发票', '出货日期', '起运/目的港', '货代', '柜号', '报关单号', '明细', '验货', '状态', ''], o.shipments.map((s) => [esc(s.ship_no), s.invoice_id ? `<a href="#/invoice/${s.invoice_id}">${esc(s.invoice_no)}</a>` : '-', esc(s.ship_date), `${esc(s.port)} → ${esc(s.dest_port)}`, esc(s.forwarder_name), esc(s.container_no), esc(s.customs_no),
     s.items.map((i) => `${esc(i.item_no)}×${i.qty}(${i.cartons}箱/${i.cbm}m³)`).join('<br>'), tag(s.inspection_status) + (s.inspection_note ? `<div class="small muted">${esc(s.inspection_note)}</div>` : ''), tag(s.status),
     can('order', 'edit') && s.status !== '已出运' && s.status !== '已取消' ? `<button class="btn small" data-ship="${s.id}">更新</button>` : '']))}</div>
       <div class="grid2">
@@ -326,7 +326,8 @@
     await ERP.grid(main, {
       key: 'doc.shipments', title: '出货台账（报关/海运）', mode: 'client', rows, module: 'order',
       columns: [
-        { key: 'ship_no', label: '出货单' }, { key: 'order_no', label: '订单', html: (s) => `<a href="#/order/${s.order_id}">${esc(s.order_no)}</a>` },
+        { key: 'ship_no', label: '出货单' }, { key: 'invoice_no', label: '发票号', html: (s) => (s.invoice_id ? `<a href="#/invoice/${s.invoice_id}">${esc(s.invoice_no)}</a>` : '') },
+        { key: 'order_no', label: '订单', html: (s) => `<a href="#/order/${s.order_id}">${esc(s.order_no)}</a>` },
         { key: 'customer_name', label: '客户' }, { key: 'country', label: '国别' }, { key: 'ship_date', label: '出货日期' },
         { key: 'port', label: '港口', text: (s) => `${s.port || ''}→${s.dest_port || ''}` }, { key: 'forwarder_name', label: '货代' }, { key: 'container_no', label: '柜号' },
         { key: 'customs_no', label: '报关单号' }, { key: 'qty', label: '数量', num: true }, { key: 'cbm', label: 'CBM', num: true },
@@ -361,15 +362,17 @@
     });
   });
   route(/^\/receivable\/(\d+)$/, async ([id], main) => {
-    const r = await get('/api/receivables/' + id);
+    const [r, wo] = await Promise.all([get('/api/receivables/' + id), get(`/api/orders/${id}/writeoffs`)]);
     setTitle('应收开票：' + r.order_no);
     main.innerHTML = `<div class="panel"><div class="panel-head"><h2>${esc(r.order_no)} ${tag(r.receive_status)}</h2><div class="toolbar">
-        ${can('receivable', 'add') ? '<button class="btn primary" id="rec">登记收款</button><button class="btn" id="inv">登记销项发票</button>' : ''}<a class="btn" href="#/receivables">返回</a></div></div>
+        ${can('receivable', 'add') ? '<button class="btn primary" id="rec">登记收款</button><button class="btn" id="inv">登记销项发票</button>' : ''}${can('receivable', 'audit') && r.unreceived > 0 ? '<button class="btn" id="wo">销账</button>' : ''}<a class="btn" href="#/receivables">返回</a></div></div>
       ${r.invoice_overdue ? `<div class="alert danger">已出货 ${r.overdue_days} 天未开票，请尽快开票！</div>` : ''}
       <div class="kv"><div><b>客户</b><span>${esc(r.customer_name)}</span></div><div><b>订单汇率</b><span>${esc(r.rate)}</span></div><div><b>应收</b><span>${money(r.amount)} ${esc(r.currency)}</span></div>
-      <div><b>实收</b><span>${money(r.received)}</span></div><div><b>未收</b><span>${money(r.unreceived)}</span></div><div><b>汇兑损益¥</b><span>${money(r.fx_gain)}</span></div>
+      <div><b>实收</b><span>${money(r.received)}</span></div>${r.written_off ? `<div><b>销账</b><span>${money(r.written_off)}</span></div>` : ''}<div><b>未收</b><span>${money(r.unreceived)}</span></div><div><b>汇兑损益¥</b><span>${money(r.fx_gain)}</span></div>
       <div><b>已开票</b><span>${money(r.invoiced)}</span></div><div><b>未开票余额</b><span>${money(r.uninvoiced)}</span></div><div><b>首次出运</b><span>${esc(r.first_ship_date)}</span></div></div></div>
       <div class="panel"><h3 class="section-title">收款记录</h3>${tableHtml(['日期', '类型', '金额', '收款汇率', '折人民币', '汇兑损益¥', '凭证', '备注'], r.receipts.map((x) => [esc(x.receipt_date), esc(x.type), `${money(x.amount)} ${esc(x.currency)}`, esc(x.rate), money(x.amount_cny), money(x.fx_gain), esc(x.voucher), esc(x.remark)]))}</div>
+      ${wo.rows.length ? `<div class="panel"><h3 class="section-title">销账记录（小额差异）</h3>${tableHtml(['时间', '金额', '原因', '操作人', ''], wo.rows.map((x) => [esc(x.created_at), money(x.amount), esc(x.reason), esc(x.user_name),
+    can('receivable', 'audit') ? `<button class="btn small danger" type="button" data-dwo="${x.id}">撤销</button>` : '']))}</div>` : ''}
       <div class="panel"><h3 class="section-title">销项发票台账</h3>${tableHtml(['发票号码', '开票日期', '金额', '备注', ''], r.invoices.map((x) => [esc(x.invoice_no), esc(x.invoice_date), money(x.amount), esc(x.remark), can('receivable', 'delete') ? `<button class="btn small danger" data-dinv="${x.id}">作废</button>` : '']))}</div>`;
     const rb = main.querySelector('#rec');
     if (rb) {
@@ -384,6 +387,13 @@
         <label>开票日期<input type="date" name="invoice_date" value="${today()}"></label><label>备注<input name="remark"></label></div>`,
       buttons: [{ text: '保存', cls: 'primary', onClick: async (m) => { await post('/api/sales-invoices', { order_id: r.id, ...readForm(m.el) }); m.close(); toast('发票已登记', 'ok'); ERP.navigate(); } }] });
     }
+    const wb = main.querySelector('#wo');
+    if (wb) {
+      wb.onclick = () => modal({ title: '销账（银行扣费、汇率尾差等小额差异）', body: `<div class="form-grid"><label><span class="req">销账金额(${esc(r.currency)})</span><input name="amount" type="number" step="any" value="${r.unreceived}"></label>
+        <label class="wide"><span class="req">原因</span><input name="reason" placeholder="例如：客户付款被中间行扣费"></label></div><p class="muted small">单笔上限由系统参数 ar_writeoff_max 控制（默认 50）。</p>`,
+      buttons: [{ text: '确认销账', cls: 'primary', onClick: async (m) => { await post(`/api/orders/${id}/writeoff`, readForm(m.el)); m.close(); toast('已销账', 'ok'); ERP.navigate(); } }] });
+    }
+    main.querySelectorAll('[data-dwo]').forEach((b) => { b.onclick = async () => { if (await confirmBox('撤销这笔销账？')) { try { await del('/api/writeoffs/' + b.dataset.dwo); ERP.navigate(); } catch (e) { toast(e.message, 'error'); } } }; });
     main.querySelectorAll('[data-dinv]').forEach((b) => { b.onclick = async () => { if (await confirmBox('作废该发票登记？')) { await del('/api/sales-invoices/' + b.dataset.dinv); ERP.navigate(); } }; });
   });
 

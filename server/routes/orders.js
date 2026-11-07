@@ -105,7 +105,7 @@ function getOrder(ctx, id) {
     c.risk_detail = JSON.parse(c.risk_detail || '{}');
     c.tasks = db.prepare('SELECT * FROM change_tasks WHERE change_id=? ORDER BY id').all(c.id);
   }
-  o.shipments = db.prepare(`SELECT s.*, a.name forwarder_name FROM shipments s LEFT JOIN agencies a ON a.id=s.forwarder_id WHERE s.order_id=? ORDER BY s.id`).all(o.id);
+  o.shipments = db.prepare(`SELECT s.*, a.name forwarder_name, iv.invoice_no FROM shipments s LEFT JOIN agencies a ON a.id=s.forwarder_id LEFT JOIN ship_invoices iv ON iv.id=s.invoice_id WHERE s.order_id=? ORDER BY s.id`).all(o.id);
   for (const s of o.shipments) {
     s.items = db.prepare('SELECT si.*, oi.item_no, oi.description FROM shipment_items si JOIN order_items oi ON oi.id=si.order_item_id WHERE si.shipment_id=?').all(s.id);
   }
@@ -428,7 +428,8 @@ function register(r) {
     if (!flow[to]) throw new HttpError(400, '不支持的状态');
     if (!flow[to].includes(o.status)) throw new HttpError(409, `当前状态【${o.status}】不能变更为【${to}】`);
     if (to === '已完成') {
-      if (o.received + 0.001 < o.amount) throw new HttpError(409, `订单尚未收齐货款（应收${o.amount}，已收${o.received}），不能完结`);
+      const wo = ctx.db.prepare('SELECT COALESCE(SUM(amount),0) v FROM ar_writeoffs WHERE order_id=?').get(o.id).v;
+      if (o.received + wo + 0.001 < o.amount) throw new HttpError(409, `订单尚未收齐货款（应收${o.amount}，已收${o.received}${wo ? `，销账${round(wo)}` : ''}），不能完结`);
     }
     ctx.db.prepare('UPDATE orders SET status=? WHERE id=?').run(to, o.id);
     log(ctx, 'order', `订单状态→${to}`, o.order_no);
@@ -467,7 +468,7 @@ function register(r) {
   r.get('/api/shipments', (ctx) => {
     need(ctx, 'order', 'view');
     const sc = docScope(ctx, 'o', 'order_items', 'order_id');
-    return { rows: ctx.db.prepare(`SELECT s.*, o.order_no, c.name customer_name, c.country, a.name forwarder_name,
+    return { rows: ctx.db.prepare(`SELECT s.*, o.order_no, c.name customer_name, c.country, a.name forwarder_name, (SELECT invoice_no FROM ship_invoices WHERE id=s.invoice_id) invoice_no,
       (SELECT SUM(qty) FROM shipment_items WHERE shipment_id=s.id) qty, (SELECT ROUND(SUM(cbm),3) FROM shipment_items WHERE shipment_id=s.id) cbm
       FROM shipments s JOIN orders o ON o.id=s.order_id LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN agencies a ON a.id=s.forwarder_id
       ${sc.sql ? 'WHERE ' + sc.sql : ''} ORDER BY s.id DESC`).all(...sc.params) };
@@ -475,59 +476,80 @@ function register(r) {
   r.post('/api/orders/:id/shipments', (ctx) => {
     need(ctx, 'order', 'edit');
     const o = getOrder(ctx, ctx.params.id);
-    assertNotLocked(ctx.db, o.id, '安排出货');
-    const items = (ctx.body.items || []).filter((x) => num(x.qty) > 0);
-    if (!items.length) throw new HttpError(400, '请填写出货数量');
-    const rows = items.map((x) => {
-      const oi = o.items.find((i) => i.id === Number(x.order_item_id));
-      if (!oi) throw new HttpError(400, '订单明细不存在');
-      assertSampleShippable(ctx.db, oi.sample_id, o);
-      if (num(x.qty) > oi.qty - oi.shipped_qty) throw new HttpError(409, `货号${oi.item_no}可出货数量仅剩${oi.qty - oi.shipped_qty}`);
-      const s = ctx.db.prepare('SELECT * FROM samples WHERE id=?').get(oi.sample_id);
-      const cartons = num(x.cartons) || (s.pcs_per_carton ? Math.ceil(num(x.qty) / s.pcs_per_carton) : 0);
-      const cbm = s.outer_l ? round(cartons * s.outer_l * s.outer_w * s.outer_h / 1e6, 3) : 0;
-      return { order_item_id: oi.id, qty: num(x.qty), cartons, cbm };
-    });
-    return tx(ctx.db, () => {
-      const no = nextNo(ctx.db, 'SH', 'shipments', 'ship_no');
-      const b = ctx.body;
-      const rr = ctx.db.prepare('INSERT INTO shipments(ship_no,order_id,ship_date,port,dest_port,vessel,container_no,customs_no,forwarder_id,remark) VALUES(?,?,?,?,?,?,?,?,?,?)')
-        .run(no, o.id, b.ship_date || today(7), b.port || '厦门', b.dest_port || '', b.vessel || '', b.container_no || '', b.customs_no || '', b.forwarder_id || null, b.remark || '');
-      const sid = Number(rr.lastInsertRowid);
-      for (const x of rows) ctx.db.prepare('INSERT INTO shipment_items(shipment_id,order_item_id,qty,cartons,cbm) VALUES(?,?,?,?,?)').run(sid, x.order_item_id, x.qty, x.cartons, x.cbm);
-      log(ctx, 'order', '新增出货计划', no, o.order_no);
-      return { id: sid, ship_no: no };
-    });
+    return tx(ctx.db, () => createShipment(ctx, o, ctx.body));
   });
   r.put('/api/shipments/:id', (ctx) => {
     need(ctx, 'order', 'edit');
     const s = ctx.db.prepare('SELECT * FROM shipments WHERE id=?').get(ctx.params.id);
     if (!s) throw new HttpError(404, '出货单不存在');
     getOrder(ctx, s.order_id);
-    const b = ctx.body;
-    if (s.status === '已出运') throw new HttpError(409, '已出运的出货单不能修改');
-    if (b.inspection_status && !['待验货', '合格', '不合格'].includes(b.inspection_status)) throw new HttpError(400, '验货状态无效');
-    if (b.inspection_status === '不合格' && !b.inspection_note) throw new HttpError(400, '验货不合格请填写问题与整改要求');
-    if (b.status && !['计划中', '已报关', '已出运', '已取消'].includes(b.status)) throw new HttpError(400, '出货状态无效');
-    const insp = b.inspection_status || s.inspection_status;
-    if (['已报关', '已出运'].includes(b.status)) {
-      assertNotLocked(ctx.db, s.order_id, '报关出运');
-      if (insp !== '合格') throw new HttpError(409, '验货合格后才能报关/出运（验货闭环）');
-      if (b.status === '已出运' && !(b.customs_no || s.customs_no)) throw new HttpError(400, '请填写报关单号');
-    }
-    const fields = ['ship_date', 'port', 'dest_port', 'vessel', 'container_no', 'customs_no', 'forwarder_id', 'status', 'inspection_status', 'inspection_note', 'remark'];
-    const set = fields.filter((f) => b[f] !== undefined);
-    tx(ctx.db, () => {
-      if (set.length) ctx.db.prepare(`UPDATE shipments SET ${set.map((f) => `${f}=?`).join(',')} WHERE id=?`).run(...set.map((f) => (b[f] === '' ? null : b[f])), s.id);
-      if (b.inspection_status && b.inspection_status !== s.inspection_status) {
-        const o = ctx.db.prepare('SELECT order_no FROM orders WHERE id=?').get(s.order_id);
-        log(ctx, 'order', `验货${b.inspection_status}`, s.ship_no, `${o.order_no} ${b.inspection_note || ''}`);
-      }
-      refreshOrderStatus(ctx.db, s.order_id);
-    });
-    log(ctx, 'order', '更新出货单', s.ship_no, b);
-    return ctx.db.prepare('SELECT * FROM shipments WHERE id=?').get(s.id);
+    return tx(ctx.db, () => updateShipment(ctx, s, ctx.body));
   });
 }
 
-module.exports = { register, getOrder, evaluateRisk, assertNotLocked, orderCost, refreshOrderStatus, customerDefaults, chargesTotal, SUMMARY_FIELDS };
+/**
+ * 新建出货单（按订单）：校验风控锁定、货号可出货、剩余数量，自动算箱数/体积/毛净重
+ * Create a shipment for one order: lock, shippability and remaining-qty checks; cartons, CBM and weights computed.
+ * 调用方负责事务 / caller wraps in a transaction
+ * @param {object} ctx
+ * @param {object} o 订单（getOrder 结果）/ order from getOrder
+ * @param {object} b 出货信息与明细 {items:[{order_item_id, qty, cartons, container_no}], ...} / shipment data
+ * @returns {{id:number, ship_no:string}}
+ */
+function createShipment(ctx, o, b) {
+  assertNotLocked(ctx.db, o.id, '安排出货');
+  const items = (b.items || []).filter((x) => num(x.qty) > 0);
+  if (!items.length) throw new HttpError(400, '请填写出货数量');
+  const rows = items.map((x) => {
+    const oi = o.items.find((i) => i.id === Number(x.order_item_id));
+    if (!oi) throw new HttpError(400, '订单明细不存在');
+    assertSampleShippable(ctx.db, oi.sample_id, o);
+    if (num(x.qty) > oi.qty - oi.shipped_qty) throw new HttpError(409, `货号${oi.item_no}可出货数量仅剩${oi.qty - oi.shipped_qty}`);
+    const s = ctx.db.prepare('SELECT * FROM samples WHERE id=?').get(oi.sample_id);
+    const cartons = num(x.cartons) || (s.pcs_per_carton ? Math.ceil(num(x.qty) / s.pcs_per_carton) : 0);
+    const cbm = s.outer_l ? round(cartons * s.outer_l * s.outer_w * s.outer_h / 1e6, 3) : (num(s.cbm) ? round(cartons * num(s.cbm), 3) : 0);
+    return { order_item_id: oi.id, qty: num(x.qty), cartons, cbm, gw: round(cartons * num(s.gross_weight), 2), nw: round(cartons * num(s.net_weight), 2), container_no: x.container_no || b.container_no || '' };
+  });
+  const no = nextNo(ctx.db, 'SH', 'shipments', 'ship_no');
+  const rr = ctx.db.prepare('INSERT INTO shipments(ship_no,order_id,ship_date,port,dest_port,vessel,container_no,customs_no,forwarder_id,remark,invoice_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+    .run(no, o.id, b.ship_date || today(7), b.port || '厦门', b.dest_port || '', b.vessel || '', b.container_no || '', b.customs_no || '', b.forwarder_id || null, b.remark || '', b.invoice_id || null);
+  const sid = Number(rr.lastInsertRowid);
+  for (const x of rows) {
+    ctx.db.prepare('INSERT INTO shipment_items(shipment_id,order_item_id,qty,cartons,cbm,gw,nw,container_no) VALUES(?,?,?,?,?,?,?,?)').run(sid, x.order_item_id, x.qty, x.cartons, x.cbm, x.gw, x.nw, x.container_no);
+  }
+  log(ctx, 'order', '新增出货计划', no, o.order_no);
+  return { id: sid, ship_no: no };
+}
+
+/**
+ * 更新出货单（验货闭环：验货合格才能报关/出运，出运需报关单号）/ Update a shipment with the inspection gate.
+ * 调用方负责事务 / caller wraps in a transaction
+ * @param {object} ctx
+ * @param {object} s 出货单 / shipment row
+ * @param {object} b 更新内容 / changes
+ * @returns {object}
+ */
+function updateShipment(ctx, s, b) {
+  if (s.status === '已出运') throw new HttpError(409, `出货单${s.ship_no}已出运，不能修改`);
+  if (b.inspection_status && !['待验货', '合格', '不合格'].includes(b.inspection_status)) throw new HttpError(400, '验货状态无效');
+  if (b.inspection_status === '不合格' && !b.inspection_note) throw new HttpError(400, '验货不合格请填写问题与整改要求');
+  if (b.status && !['计划中', '已报关', '已出运', '已取消'].includes(b.status)) throw new HttpError(400, '出货状态无效');
+  const insp = b.inspection_status || s.inspection_status;
+  if (['已报关', '已出运'].includes(b.status)) {
+    assertNotLocked(ctx.db, s.order_id, '报关出运');
+    if (insp !== '合格') throw new HttpError(409, `出货单${s.ship_no}验货合格后才能报关/出运（验货闭环）`);
+    if (b.status === '已出运' && !(b.customs_no || s.customs_no)) throw new HttpError(400, '请填写报关单号');
+  }
+  const fields = ['ship_date', 'port', 'dest_port', 'vessel', 'container_no', 'customs_no', 'forwarder_id', 'status', 'inspection_status', 'inspection_note', 'remark'];
+  const set = fields.filter((f) => b[f] !== undefined);
+  if (set.length) ctx.db.prepare(`UPDATE shipments SET ${set.map((f) => `${f}=?`).join(',')} WHERE id=?`).run(...set.map((f) => (b[f] === '' ? null : b[f])), s.id);
+  if (b.inspection_status && b.inspection_status !== s.inspection_status) {
+    const o = ctx.db.prepare('SELECT order_no FROM orders WHERE id=?').get(s.order_id);
+    log(ctx, 'order', `验货${b.inspection_status}`, s.ship_no, `${o.order_no} ${b.inspection_note || ''}`);
+  }
+  refreshOrderStatus(ctx.db, s.order_id);
+  log(ctx, 'order', '更新出货单', s.ship_no, b);
+  return ctx.db.prepare('SELECT * FROM shipments WHERE id=?').get(s.id);
+}
+
+module.exports = { register, getOrder, evaluateRisk, assertNotLocked, orderCost, refreshOrderStatus, customerDefaults, chargesTotal, SUMMARY_FIELDS, createShipment, updateShipment };

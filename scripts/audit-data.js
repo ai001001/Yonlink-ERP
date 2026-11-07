@@ -60,7 +60,10 @@ function audit(db) {
   check('已出运的出货单均验货合格且有报关单号', all(`SELECT ship_no FROM shipments WHERE status='已出运' AND (inspection_status<>'合格' OR customs_no IS NULL OR customs_no='')`));
   const shippedAll = `NOT EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND oi.qty > (SELECT COALESCE(SUM(si.qty),0) FROM shipment_items si JOIN shipments s ON s.id=si.shipment_id WHERE si.order_item_id=oi.id AND s.status='已出运'))`;
   check('订单“已出货/已完成”时全部出运', all(`SELECT order_no, status FROM orders o WHERE status IN ('已出货','已完成') AND NOT ${shippedAll}`));
-  check('订单“已完成”时货款收齐', all(`SELECT order_no FROM orders o WHERE status='已完成' AND (SELECT COALESCE(SUM(amount),0) FROM receipts WHERE order_id=o.id) < ${orderAmt} - ${EPS}`));
+  const hasWo = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ar_writeoffs'").get();
+  const wo = hasWo ? '(SELECT COALESCE(SUM(amount),0) FROM ar_writeoffs WHERE order_id=o.id)' : '0';
+  check('订单“已完成”时货款收齐（含销账）', all(`SELECT order_no FROM orders o WHERE status='已完成' AND (SELECT COALESCE(SUM(amount),0) FROM receipts WHERE order_id=o.id) + ${wo} < ${orderAmt} - ${EPS}`));
+  check('收款+销账不超过订单金额', all(`SELECT o.order_no FROM orders o WHERE (SELECT COALESCE(SUM(amount),0) FROM receipts WHERE order_id=o.id) + ${wo} > ${orderAmt} + ${EPS}`));
   check('报价“已成交” ⇔ 有对应订单', all(`SELECT quote_no, status FROM quotes q WHERE (status='已成交') <> EXISTS (SELECT 1 FROM orders o WHERE o.quote_id=q.id)`));
   check('询价单号 = 报价单号-厂家名称', all(`SELECT i.inquiry_no FROM inquiries i JOIN quotes q ON q.id=i.quote_id JOIN suppliers s ON s.id=i.supplier_id WHERE i.inquiry_no <> q.quote_no || '-' || s.name`));
   const badImg = [];

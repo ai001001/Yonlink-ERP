@@ -131,6 +131,16 @@ CREATE TABLE IF NOT EXISTS customer_contacts (id INTEGER PRIMARY KEY, customer_i
 CREATE TABLE IF NOT EXISTS customer_marks (id INTEGER PRIMARY KEY, customer_id INTEGER, name TEXT, front_mark TEXT, side_mark TEXT, inner_mark TEXT, is_default TEXT DEFAULT '否', remark TEXT);
 CREATE TABLE IF NOT EXISTS customer_forwarders (id INTEGER PRIMARY KEY, customer_id INTEGER, agency_id INTEGER, name TEXT, contact TEXT, phone TEXT, email TEXT, port TEXT, remark TEXT);
 CREATE TABLE IF NOT EXISTS customer_banks (id INTEGER PRIMARY KEY, customer_id INTEGER, bank_name TEXT, account_name TEXT, account_no TEXT, swift TEXT, currency TEXT, bank_address TEXT, remark TEXT);
+CREATE TABLE IF NOT EXISTS ship_invoices (id INTEGER PRIMARY KEY, invoice_no TEXT UNIQUE, customer_id INTEGER, currency TEXT, invoice_date TEXT, due_date TEXT,
+  port_loading TEXT, port_dest TEXT, transport TEXT, vessel TEXT, etd TEXT, eta TEXT, bl_no TEXT, container_nos TEXT, seal_nos TEXT, consignee TEXT, notify TEXT,
+  shipping_marks TEXT, forwarder_id INTEGER, customs_no TEXT, trade_term TEXT, status TEXT DEFAULT '草稿', remark TEXT, user_name TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
+CREATE TABLE IF NOT EXISTS ar_others (id INTEGER PRIMARY KEY, other_no TEXT UNIQUE, customer_id INTEGER, kind TEXT, currency TEXT, amount REAL, due_date TEXT, source_no TEXT, remark TEXT,
+  user_name TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
+CREATE TABLE IF NOT EXISTS bank_slips (id INTEGER PRIMARY KEY, slip_no TEXT UNIQUE, receive_date TEXT, payer TEXT, customer_id INTEGER, currency TEXT, amount REAL, fee REAL DEFAULT 0,
+  bank TEXT, remark TEXT, user_name TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
+CREATE TABLE IF NOT EXISTS slip_claims (id INTEGER PRIMARY KEY, slip_id INTEGER, target_type TEXT, target_id INTEGER, amount REAL, receipt_id INTEGER, user_name TEXT,
+  created_at TEXT DEFAULT (datetime('now','localtime')));
+CREATE TABLE IF NOT EXISTS ar_writeoffs (id INTEGER PRIMARY KEY, order_id INTEGER, amount REAL, reason TEXT, user_name TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
 CREATE TABLE IF NOT EXISTS order_charges (id INTEGER PRIMARY KEY, order_id INTEGER, kind TEXT, name TEXT, amount REAL, remark TEXT, user_name TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
 CREATE TABLE IF NOT EXISTS user_prefs (user_id INTEGER, pkey TEXT, value TEXT, updated_at TEXT DEFAULT (datetime('now','localtime')), PRIMARY KEY (user_id, pkey));
 CREATE TABLE IF NOT EXISTS handovers (id INTEGER PRIMARY KEY, from_emp_id INTEGER, to_emp_id INTEGER, from_name TEXT, to_name TEXT, scopes TEXT, counts TEXT, reason TEXT, user_name TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
@@ -388,6 +398,11 @@ const ADDED_COLUMNS = [
   ['orders', 'front_mark', 'TEXT'],
   ['orders', 'side_mark', 'TEXT'],
   ['orders', 'inner_mark', 'TEXT'],
+  // 批次5：出货中心（按发票）、装箱分柜与毛净重 / batch 5: invoice-based shipping, per-container packing, weights
+  ['shipments', 'invoice_id', 'INTEGER'],
+  ['shipment_items', 'container_no', 'TEXT'],
+  ['shipment_items', 'gw', 'REAL'],
+  ['shipment_items', 'nw', 'REAL'],
 ];
 
 /** 新增系统参数默认值 / Default values for settings added after v1 */
@@ -401,6 +416,7 @@ const DEFAULT_SETTINGS = {
   mail_allow_private_hosts: '0',
   lockout_threshold: '5',
   lockout_minutes: '15',
+  ar_writeoff_max: '50',
 };
 
 /**
