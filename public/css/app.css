@@ -116,7 +116,7 @@ h3 { font-size: 15px; }
 .topbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .crumb { flex: 1; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .userbox { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.role-tag { background: var(--primary-soft); color: var(--primary); padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+.role-tag { background: var(--primary-soft); color: var(--primary); padding: 2px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap; }
 .icon-btn { display: block; border: 0; background: none; font-size: 20px; color: var(--text); cursor: pointer; }
 .main { padding: 20px; max-width: 1500px; width: 100%; }
 .backdrop { display: none; }
@@ -133,6 +133,8 @@ h3 { font-size: 15px; }
 .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
 .kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px 16px; }
 .kv > div { display: flex; gap: 6px; min-width: 0; }
+.kv > div.kv-wide { grid-column: 1 / -1; }
+.kv > div.kv-wide span { white-space: pre-wrap; }
 .kv b { color: var(--muted); font-weight: 400; white-space: nowrap; }
 .kv span { overflow-wrap: anywhere; }
 
@@ -264,3 +266,13 @@ label.btn { display: inline-flex; align-items: center; }
   .card .v { font-size: 20px; }
   .panel { padding: 12px; }
 }
+
+/* 数据迁移页 / data-migration page */
+.mig-cards { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.mig-bucket .l { min-height: 2.6em; }
+.mig-bucket .v .tag { font-size: 18px; padding: 2px 12px; }
+.mig-sub { margin: 14px 0 6px; font-size: 14px; }
+.mig-map select { min-width: 180px; }
+.mig-map tr.mig-off td:first-child { color: var(--muted); }
+#migHistory td { white-space: nowrap; }
+#migHistory td:nth-child(3) { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }

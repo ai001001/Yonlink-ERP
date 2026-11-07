@@ -62,6 +62,12 @@ class Buffer extends Uint8Array {
     return o + 2;
   }
 
+  /** @param {number} o */
+  readUInt32LE(o) { return new DataView(this.buffer, this.byteOffset, this.byteLength).getUint32(o, true); }
+
+  /** @param {number} o */
+  readUInt16LE(o) { return new DataView(this.buffer, this.byteOffset, this.byteLength).getUint16(o, true); }
+
   /** @param {string} [enc] 'hex' 或 utf8 / 'hex' or utf8 */
   toString(enc) {
     if (enc === 'hex') return Array.from(this, (x) => x.toString(16).padStart(2, '0')).join('');
@@ -170,6 +176,112 @@ const zlibShim = {
       pos += len;
     } while (pos < data.length);
     return Buffer.concat(parts);
+  },
+
+  /**
+   * 纯 JS 解压 deflate 流（用于读取导入的 xlsx）/ Pure-JS raw-deflate decoder, used to read imported .xlsx files.
+   * @param {Uint8Array} data
+   * @returns {Buffer}
+   */
+  inflateRawSync(data) {
+    let pos = 0;
+    let bit = 0;
+    let out = new Uint8Array(Math.max(1024, data.length * 4));
+    let len = 0;
+    const need = (n) => {
+      if (len + n <= out.length) return;
+      const bigger = new Uint8Array(Math.max(out.length * 2, len + n));
+      bigger.set(out.subarray(0, len));
+      out = bigger;
+    };
+    const bits = (n) => {
+      let v = 0;
+      for (let i = 0; i < n; i++) {
+        if (pos >= data.length) throw new Error('deflate 数据不完整');
+        v |= ((data[pos] >> bit) & 1) << i;
+        if (++bit === 8) { bit = 0; pos++; }
+      }
+      return v;
+    };
+    // 由码长构建解码表 / build a canonical Huffman decoder from code lengths
+    const build = (lengths) => {
+      const counts = new Uint16Array(16);
+      for (const l of lengths) counts[l]++;
+      counts[0] = 0;
+      const offs = new Uint16Array(16);
+      for (let i = 1; i < 16; i++) offs[i] = offs[i - 1] + counts[i - 1];
+      const symbols = new Uint16Array(lengths.length);
+      lengths.forEach((l, sym) => { if (l) symbols[offs[l]++] = sym; });
+      return { counts, symbols };
+    };
+    const decode = (t) => {
+      let code = 0;
+      let first = 0;
+      let index = 0;
+      for (let l = 1; l < 16; l++) {
+        code |= bits(1);
+        const count = t.counts[l];
+        if (code - first < count) return t.symbols[index + code - first];
+        index += count;
+        first = (first + count) << 1;
+        code <<= 1;
+      }
+      throw new Error('deflate 编码无效');
+    };
+    const LBASE = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+    const LEXT = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+    const DBASE = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+    const DEXT = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+    const fixedL = build(Array.from({ length: 288 }, (_, i) => (i < 144 ? 8 : i < 256 ? 9 : i < 280 ? 7 : 8)));
+    const fixedD = build(new Array(30).fill(5));
+    let last = 0;
+    while (!last) {
+      last = bits(1);
+      const type = bits(2);
+      if (type === 0) {
+        if (bit) { bit = 0; pos++; }
+        const n = data[pos] | (data[pos + 1] << 8);
+        pos += 4;
+        need(n);
+        out.set(data.subarray(pos, pos + n), len);
+        len += n;
+        pos += n;
+        continue;
+      }
+      let lt = fixedL;
+      let dt = fixedD;
+      if (type === 2) {
+        const hlit = bits(5) + 257;
+        const hdist = bits(5) + 1;
+        const hclen = bits(4) + 4;
+        const order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+        const cl = new Array(19).fill(0);
+        for (let i = 0; i < hclen; i++) cl[order[i]] = bits(3);
+        const ct = build(cl);
+        const lens = [];
+        while (lens.length < hlit + hdist) {
+          const sym = decode(ct);
+          if (sym < 16) lens.push(sym);
+          else if (sym === 16) { const prev = lens[lens.length - 1]; for (let r = bits(2) + 3; r > 0; r--) lens.push(prev); }
+          else if (sym === 17) { for (let r = bits(3) + 3; r > 0; r--) lens.push(0); }
+          else { for (let r = bits(7) + 11; r > 0; r--) lens.push(0); }
+        }
+        lt = build(lens.slice(0, hlit));
+        dt = build(lens.slice(hlit));
+      } else if (type !== 1) throw new Error('deflate 块类型无效');
+      for (;;) {
+        const sym = decode(lt);
+        if (sym < 256) { need(1); out[len++] = sym; continue; }
+        if (sym === 256) break;
+        const li = sym - 257;
+        const n = LBASE[li] + bits(LEXT[li]);
+        const di = decode(dt);
+        const dist = DBASE[di] + bits(DEXT[di]);
+        need(n);
+        for (let k = 0; k < n; k++, len++) out[len] = out[len - dist];
+      }
+    }
+    return Buffer.from(out.subarray(0, len));
   },
 };
 

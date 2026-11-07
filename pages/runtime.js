@@ -112,7 +112,7 @@
     HttpError = http.HttpError;
     db = load('server/db.js').openDb(':memory:');
     router = new http.Router();
-    for (const m of ['base', 'sales', 'orders', 'finance', 'reports', 'integrations']) load(`server/routes/${m}.js`).register(router);
+    for (const m of ['base', 'sales', 'orders', 'finance', 'reports', 'integrations', 'migrate']) load(`server/routes/${m}.js`).register(router);
     ({ loadUser, assertPasswordFresh } = load('server/routes/base.js'));
     if (fromDemo) {
       // 演示版密码算法与服务器不同：统一重置为 123456；清除会话与真实邮箱账户 / reset passwords for the demo hash, drop sessions & mailbox accounts

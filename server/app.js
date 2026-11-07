@@ -26,7 +26,7 @@ function createApp(opts = {}) {
   const db = openDb(opts.dbFile || ':memory:', { reset: opts.reset });
   const config = { secret: opts.secret || loadSecret(opts.dbFile) };
   const router = new Router();
-  for (const m of ['base', 'sales', 'orders', 'finance', 'reports', 'integrations']) require(`./routes/${m}`).register(router);
+  for (const m of ['base', 'sales', 'orders', 'finance', 'reports', 'integrations', 'migrate']) require(`./routes/${m}`).register(router);
   // 匿名请求按 IP 限流；登录后按令牌限流，避免同一办公室共用出口 IP 时互相影响
   // anonymous requests are limited per IP; authenticated ones per token so an office sharing one public IP is not throttled together
   const anonLimit = opts.rateLimit === undefined ? 300 : opts.rateLimit;

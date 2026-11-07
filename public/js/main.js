@@ -38,7 +38,7 @@
     ['财务管理', 'finance', [['应收款与开票', '#/receivables', 'receivable'], ['应付与进项票', '#/payables', 'purchase'], ['币种汇率', '#/e/currency', 'trade'], ['汇率波动记录', '#/e/rate_history', 'trade']]],
     ['统计分析', 'report', [['统计报表', '#/reports/business', 'report'], ['设计师速查中心', '#/designer', 'designer']]],
     ['基础资料', 'base', [['服务机构', '#/e/agency', 'agency'], ['机构对接记录', '#/e/agency_record', 'agency'], ['贸易术语', '#/e/trade_term', 'trade'], ['部门', '#/e/department', 'hr'], ['员工档案', '#/e/employee', 'hr']]],
-    ['系统设置', 'system', [['系统权限管理', '#/system', 'system']]],
+    ['系统设置', 'system', [['系统权限管理', '#/system', 'system'], ['数据迁移（亿星导入）', '#/migrate', 'system']]],
   ];
 
   /** 详情页归属的菜单 / Menu entry that owns a detail page */

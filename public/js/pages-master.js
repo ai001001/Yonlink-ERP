@@ -123,6 +123,27 @@
   }
   route(/^\/e\/(\w+)$/, ([key], main, qs) => entityPage(key, main, qs));
 
+  /**
+   * 其余有值的档案字段（含亿星兼容字段），避免详情页漏显示
+   * Remaining non-empty entity fields (incl. 亿星-compatible ones) for detail pages.
+   * @param {string} key 实体键 / entity key
+   * @param {object} row 记录 / record
+   * @param {string[]} skip 已显示的字段 / fields already shown
+   * @returns {Promise<string>}
+   */
+  async function moreKv(key, row, skip) {
+    const fields = ERP.state.meta.entities[key].fields.filter((f) => !skip.includes(f.name) && row[f.name] !== null && row[f.name] !== undefined && row[f.name] !== '');
+    const items = await Promise.all(fields.map(async (f) => {
+      let v = row[f.name];
+      if (f.type === 'ref') {
+        const opt = (await ERP.options(f.ref)).find((o) => String(o.id) === String(v));
+        v = opt ? opt.label : v;
+      }
+      return `<div class="${f.type === 'textarea' ? 'kv-wide' : ''}"><b>${esc(f.label)}</b><span>${esc(v)}</span></div>`;
+    }));
+    return items.join('');
+  }
+
   // ---------- 客户 360 / customer overview ----------
   route(/^\/customer\/(\d+)$/, async ([id], main) => {
     const d = await get(`/api/customers/${id}/overview`);
@@ -132,7 +153,8 @@
     main.innerHTML = `<div class="panel"><div class="panel-head"><h2>${esc(c.name)} ${tag(c.level)}</h2>
         <div class="toolbar">${can('customer', 'add') ? '<button class="btn primary" id="follow">＋ 跟进记录</button>' : ''}<a class="btn" href="#/e/customer">返回列表</a></div></div>
       <div class="kv"><div><b>编码</b><span>${esc(c.code)}</span></div><div><b>国别</b><span>${esc(c.country)}</span></div><div><b>联系人</b><span>${esc(c.contact)}</span></div>
-      <div><b>邮箱</b><span>${esc(c.email)}</span></div><div><b>业务员</b><span>${esc(c.salesman_name)}</span></div><div><b>来源</b><span>${esc(c.source)}</span></div></div></div>
+      <div><b>邮箱</b><span>${esc(c.email)}</span></div><div><b>业务员</b><span>${esc(c.salesman_name)}</span></div><div><b>来源</b><span>${esc(c.source)}</span></div>
+      ${await moreKv('customer', c, ['code', 'name', 'country', 'contact', 'email', 'salesman_id', 'source', 'level'])}</div></div>
       ${sec('跟进日志 / 询盘记录', ['时间', '类型', '内容', '下次跟进', '记录人'], d.follows.map((x) => [esc(x.created_at), esc(x.type), esc(x.content), esc(x.next_date), esc(x.user_name)]))}
       ${sec('往来邮件', ['时间', '方向', '主题', '分类'], d.mails.map((x) => [esc(x.created_at), esc(x.direction), esc(x.subject), esc(x.category)]))}
       ${sec('历史报价', ['报价单号', '日期', '金额', '状态'], d.quotes.map((x) => [`<a href="#/quote/${x.id}">${esc(x.quote_no)}</a>`, esc(String(x.created_at).slice(0, 10)), `${money(x.amount)} ${esc(x.currency)}`, tag(x.status)]))}
@@ -168,6 +190,9 @@
         <div><b>包装要求</b><span>${esc(s.package_req)}</span></div><div><b>标签规范</b><span>${esc(s.label_req)}</span></div><div><b>内盒</b><span>${esc(s.inner_box)}</span></div>
         <div><b>外箱(cm)</b><span>${s.outer_l ? `${s.outer_l}×${s.outer_w}×${s.outer_h}，${s.pcs_per_carton}只/箱` : ''}</span></div><div><b>MOQ</b><span>${esc(s.moq)}</span></div>
         <div><b>原货号</b><span>${s.parent_no ? esc(s.parent_no) : '-'}</span></div>
+        ${await moreKv('sample', s, ['company_no', 'customer_no', 'factory_no', 'name', 'name_en', 'length_cm', 'width_cm', 'height_cm', 'material', 'craft', 'color', 'consumables',
+    'designer_id', 'supplier_id', 'material_cost', 'labor_cost', 'sample_fee', 'stock_qty', 'package_req', 'label_req', 'inner_box', 'outer_l', 'outer_w', 'outer_h', 'pcs_per_carton', 'moq',
+    'parent_no', 'status', 'progress', 'images'])}
       </div>
       <div class="panel-head" style="margin:14px 0 6px"><h3>样品图片 <span class="muted small">${imgs.length} 张</span></h3>
         ${can('sample', 'edit') ? '<label class="btn small">＋ 上传图片<input type="file" id="upl" accept="image/*" multiple hidden></label>' : ''}</div>

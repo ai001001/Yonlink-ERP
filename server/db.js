@@ -127,6 +127,10 @@ CREATE TABLE IF NOT EXISTS mail_accounts (id INTEGER PRIMARY KEY, email TEXT UNI
   uidvalidity INTEGER, last_uid INTEGER DEFAULT 0, last_fetch_at TEXT, last_error TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
 CREATE TABLE IF NOT EXISTS files (id INTEGER PRIMARY KEY, name TEXT, mime TEXT, size INTEGER, data BLOB, owner_type TEXT, owner_id INTEGER, created_by TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
 
+CREATE TABLE IF NOT EXISTS import_batches (id INTEGER PRIMARY KEY, batch_no TEXT UNIQUE, entity TEXT, source TEXT DEFAULT '亿星', file_name TEXT, mode TEXT, total INTEGER DEFAULT 0,
+  created INTEGER DEFAULT 0, updated INTEGER DEFAULT 0, skipped INTEGER DEFAULT 0, failed INTEGER DEFAULT 0, status TEXT DEFAULT '已导入', result TEXT, user_name TEXT,
+  created_at TEXT DEFAULT (datetime('now','localtime')), rolled_back_at TEXT);
+CREATE TABLE IF NOT EXISTS import_batch_rows (id INTEGER PRIMARY KEY, batch_id INTEGER, record_id INTEGER, action TEXT, before_json TEXT);
 CREATE TABLE IF NOT EXISTS approvals (id INTEGER PRIMARY KEY, target_type TEXT, target_id INTEGER, target_no TEXT, title TEXT, status TEXT DEFAULT '待审批', applicant TEXT, approver TEXT, note TEXT, created_at TEXT DEFAULT (datetime('now','localtime')), decided_at TEXT);
 `;
 
@@ -303,6 +307,58 @@ const ADDED_COLUMNS = [
   ['users', 'locked_until', 'INTEGER'],
   ['users', 'password_changed_at', 'TEXT'],
   ['users', 'last_login_at', 'TEXT'],
+  // 亿星兼容字段：客户档案 / 亿星-compatible customer fields
+  ['customers', 'full_name_en', 'TEXT'],
+  ['customers', 'full_name_cn', 'TEXT'],
+  ['customers', 'address_cn', 'TEXT'],
+  ['customers', 'province', 'TEXT'],
+  ['customers', 'city', 'TEXT'],
+  ['customers', 'zip_code', 'TEXT'],
+  ['customers', 'website', 'TEXT'],
+  ['customers', 'fax', 'TEXT'],
+  ['customers', 'mobile', 'TEXT'],
+  ['customers', 'merchandiser_id', 'INTEGER'],
+  ['customers', 'dest_port', 'TEXT'],
+  ['customers', 'price_term', 'TEXT'],
+  ['customers', 'currency', 'TEXT'],
+  ['customers', 'pay_terms', 'TEXT'],
+  ['customers', 'commission_rate', 'REAL'],
+  ['customers', 'customer_type', 'TEXT'],
+  ['customers', 'express_co', 'TEXT'],
+  ['customers', 'express_account', 'TEXT'],
+  ['customers', 'package_req', 'TEXT'],
+  ['customers', 'inspection_req', 'TEXT'],
+  ['customers', 'use_status', "TEXT DEFAULT '启用'"],
+  // 亿星兼容字段：厂家（供应商）/ 亿星-compatible supplier fields
+  ['suppliers', 'full_name', 'TEXT'],
+  ['suppliers', 'fax', 'TEXT'],
+  ['suppliers', 'mobile', 'TEXT'],
+  ['suppliers', 'province', 'TEXT'],
+  ['suppliers', 'city', 'TEXT'],
+  ['suppliers', 'purchase_type', 'TEXT'],
+  ['suppliers', 'coop_status', 'TEXT'],
+  ['suppliers', 'tax_no', 'TEXT'],
+  ['suppliers', 'bank_name', 'TEXT'],
+  ['suppliers', 'bank_account', 'TEXT'],
+  ['suppliers', 'tax_rate', 'REAL'],
+  ['suppliers', 'partner_supplier_id', 'INTEGER'],
+  ['suppliers', 'use_status', "TEXT DEFAULT '启用'"],
+  // 亿星兼容字段：样品档案（货号）/ 亿星-compatible sample (item) fields
+  ['samples', 'series', 'TEXT'],
+  ['samples', 'unit', "TEXT DEFAULT 'PC'"],
+  ['samples', 'set_qty', 'INTEGER DEFAULT 1'],
+  ['samples', 'compose_type', "TEXT DEFAULT '单件'"],
+  ['samples', 'pack_inner', 'INTEGER'],
+  ['samples', 'pack_middle', 'INTEGER'],
+  ['samples', 'cbm', 'REAL'],
+  ['samples', 'net_weight', 'REAL'],
+  ['samples', 'gross_weight', 'REAL'],
+  ['samples', 'factory_price', 'REAL'],
+  ['samples', 'tax_rate', 'REAL'],
+  ['samples', 'hs_code', 'TEXT'],
+  ['samples', 'desc_cn', 'TEXT'],
+  ['samples', 'desc_en', 'TEXT'],
+  ['samples', 'use_status', "TEXT DEFAULT '启用'"],
 ];
 
 /** 新增系统参数默认值 / Default values for settings added after v1 */

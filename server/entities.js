@@ -15,6 +15,14 @@
 const f = (name, label, o = {}) => ({ name, label, type: 'text', list: true, ...o });
 
 const RATING = ['A', 'B', 'C', 'D'];
+/** 使用状态（亿星“停用”）/ Active flag, maps 亿星's 停用 checkbox */
+const USE_STATUS = ['启用', '停用'];
+/** 客户来源 / Customer sources */
+const CUSTOMER_SOURCES = ['展会', '广交会', '阿里巴巴', '官网', '老客户介绍', '社媒', '其它'];
+/** 厂家采购类型（亿星）/ 亿星 supplier purchase types */
+const PURCHASE_TYPES = ['产品', '配件', '包材', '工序', '其它'];
+/** 厂家状态（亿星）/ 亿星 supplier cooperation status */
+const COOP_STATUS = ['战略供应商', '优先供应商', '一般供应商', '考察供应商', '停止合作'];
 
 /** @type {Object<string, object>} */
 const ENTITIES = {
@@ -39,6 +47,13 @@ const ENTITIES = {
       f('contact', '联系人'), f('phone', '电话'), f('email', '邮箱（询价单邮件发送）', { list: false }), f('address', '地址', { list: false }), f('settlement', '结算方式'),
       f('item_range', '生产货号/品类范围'), f('rating', '评级', { type: 'select', options: RATING }),
       f('pass_rate', '供货合格率%', { type: 'number' }), f('qualification', '资质说明', { type: 'textarea', list: false }),
+      // 亿星兼容字段 / 亿星-compatible fields
+      f('full_name', '厂家全称', { list: false }), f('purchase_type', '采购类型', { type: 'select', options: PURCHASE_TYPES, list: false }),
+      f('coop_status', '厂家状态', { type: 'select', options: COOP_STATUS, list: false }),
+      f('mobile', '移动电话', { list: false }), f('fax', '传真', { list: false }), f('province', '省份', { list: false }), f('city', '城市', { list: false }),
+      f('tax_no', '税号', { list: false }), f('bank_name', '开户银行', { list: false }), f('bank_account', '银行账号', { list: false }),
+      f('tax_rate', '开票税率%', { type: 'number', list: false }), f('partner_supplier_id', '合作厂家(包材厂随产品厂开票)', { type: 'ref', ref: 'supplier', list: false }),
+      f('use_status', '使用状态', { type: 'select', options: USE_STATUS, default: '启用', list: false }),
       f('remark', '备注', { type: 'textarea', list: false }),
     ],
   },
@@ -70,7 +85,17 @@ const ENTITIES = {
       f('code', '客户编码', { required: true }), f('name', '客户名称', { required: true }), f('country', '国别', { required: true }),
       f('contact', '联系人'), f('email', '邮箱'), f('phone', '电话', { list: false }), f('address', '地址', { list: false }),
       f('salesman_id', '业务员', { type: 'ref', ref: 'employee' }), f('level', '等级', { type: 'select', options: RATING }),
-      f('source', '来源', { type: 'select', options: ['展会', '阿里巴巴', '官网', '老客户介绍', '社媒', '其它'] }),
+      f('source', '来源', { type: 'select', options: CUSTOMER_SOURCES }),
+      // 亿星兼容字段 / 亿星-compatible fields
+      f('full_name_en', '英文全称', { list: false }), f('full_name_cn', '中文全称', { list: false }), f('address_cn', '中文地址', { list: false }),
+      f('province', '省/州', { list: false }), f('city', '城市', { list: false }), f('zip_code', '邮编', { list: false }),
+      f('mobile', '移动电话', { list: false }), f('fax', '传真', { list: false }), f('website', '网址', { list: false }),
+      f('merchandiser_id', '跟单员', { type: 'ref', ref: 'employee', list: false }),
+      f('dest_port', '目的港', { list: false }), f('price_term', '价格条款', { list: false }), f('currency', '币种', { list: false }),
+      f('pay_terms', '付款方式', { list: false }), f('commission_rate', '佣金%', { type: 'number', list: false }),
+      f('customer_type', '客户类型', { list: false }), f('express_co', '快递公司', { list: false }), f('express_account', '快递账号', { list: false }),
+      f('package_req', '包装要求', { type: 'textarea', list: false }), f('inspection_req', '验货要求', { type: 'textarea', list: false }),
+      f('use_status', '使用状态', { type: 'select', options: USE_STATUS, default: '启用', list: false }),
       f('remark', '备注', { type: 'textarea', list: false }),
     ],
   },
@@ -113,6 +138,14 @@ const ENTITIES = {
       f('stock_qty', '样品库存', { type: 'number', list: false }),
       f('progress', '打样进度', { type: 'select', options: ['待打样', '打样中', '已完成', '重做中'] }),
       f('status', '状态', { type: 'select', options: ['正常', '已锁定'], readonly: true }), f('parent_no', '原货号(改样来源)', { readonly: true }),
+      // 亿星兼容字段 / 亿星-compatible fields
+      f('series', '系列', { list: false }), f('unit', '单位', { list: false, default: 'PC' }), f('set_qty', '套数', { type: 'number', list: false }),
+      f('compose_type', '组成方式', { type: 'select', options: ['单件', '组件', '套件'], default: '单件', list: false }),
+      f('pack_inner', '包装率-内', { type: 'number', list: false }), f('pack_middle', '包装率-中', { type: 'number', list: false }),
+      f('cbm', '外箱体积CBM', { type: 'number', list: false }), f('net_weight', '净重kg/箱', { type: 'number', list: false }), f('gross_weight', '毛重kg/箱', { type: 'number', list: false }),
+      f('factory_price', '工厂报价¥', { type: 'number', list: false }), f('tax_rate', '进项税率%', { type: 'number', list: false }), f('hs_code', '海关编码', { list: false }),
+      f('desc_cn', '中文描述', { type: 'textarea', list: false }), f('desc_en', '英文描述', { type: 'textarea', list: false }),
+      f('use_status', '使用状态', { type: 'select', options: USE_STATUS, default: '启用', list: false }),
       f('images', '图片链接(多张用逗号分隔)', { type: 'textarea', list: false }), f('remark', '备注', { type: 'textarea', list: false }),
     ],
   },
@@ -167,4 +200,4 @@ const REF_LABEL = {
   trade_term: { table: 'trade_terms', label: "code || ' ' || name", pk: 'code' },
 };
 
-module.exports = { ENTITIES, REF_LABEL };
+module.exports = { ENTITIES, REF_LABEL, RATING, USE_STATUS, CUSTOMER_SOURCES, PURCHASE_TYPES, COOP_STATUS };
