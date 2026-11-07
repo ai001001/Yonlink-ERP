@@ -8,6 +8,7 @@
 const { HttpError } = require('../http');
 const { need, can, log, nextNo, tx, num, round, required, today } = require('../core');
 const { syncItems } = require('./sales');
+const stock = require('../stock');
 
 /** 生产工序顺序 / Production process order */
 const PROCESSES = ['制坯', '上釉', '烧制', '彩绘', '包装'];
@@ -308,9 +309,9 @@ function register(r) {
           invId = ex ? ex.id : Number(ctx.db.prepare("INSERT INTO inventory(code,name,category,unit,qty,unit_cost) VALUES(?,?,?,?,0,0)").run(it.code, it.name, p.type === '外购成品' ? '外购成品' : '其它', it.unit).lastInsertRowid);
         }
         const inv = ctx.db.prepare('SELECT * FROM inventory WHERE id=?').get(invId);
-        const newQty = num(inv.qty) + num(l.qty);
-        const avg = newQty > 0 ? round((num(inv.qty) * num(inv.unit_cost) + num(l.qty) * it.price) / newQty, 4) : it.price;
-        ctx.db.prepare('UPDATE inventory SET qty=?, unit_cost=? WHERE id=?').run(newQty, avg, invId);
+        // 入库写流水（可指定仓库，默认物料的默认仓库）/ stock move into the chosen or default warehouse
+        const wh = Number(ctx.body.warehouse_id) || stock.defaultWarehouse(ctx.db, inv);
+        stock.stockIn(ctx.db, inv, wh, num(l.qty), it.price, { move_no: p.po_no, type: '采购入库', ref_no: p.po_no, user_name: ctx.user.name });
         ctx.db.prepare("INSERT INTO supplier_prices(supplier_id,item_no,price,currency,source,ref_no) VALUES(?,?,?,'CNY','采购入库',?)").run(p.supplier_id, it.code, it.price, p.po_no);
       }
       const after = ctx.db.prepare('SELECT SUM(qty) q, SUM(received_qty) r FROM purchase_items WHERE po_id=?').get(p.id);
@@ -380,11 +381,11 @@ function register(r) {
     if (!inv) throw new HttpError(404, '物料不存在');
     const qty = num(ctx.body.qty);
     if (qty <= 0) throw new HttpError(400, '领料数量必须大于0');
-    if (qty > inv.qty) throw new HttpError(409, `库存不足：${inv.name} 当前库存 ${inv.qty}${inv.unit}`);
+    if (qty > inv.qty + 1e-9) throw new HttpError(409, `库存不足：${inv.name} 当前库存 ${inv.qty}${inv.unit}`);
     const o = ctx.db.prepare('SELECT * FROM orders WHERE id=?').get(ctx.body.order_id);
     if (!o) throw new HttpError(404, '订单不存在');
     tx(ctx.db, () => {
-      ctx.db.prepare('UPDATE inventory SET qty=qty-? WHERE id=?').run(qty, inv.id);
+      stock.stockOut(ctx.db, inv, Number(ctx.body.warehouse_id) || null, qty, { move_no: o.order_no, type: '领料出库', ref_no: o.order_no, user_name: ctx.user.name });
       ctx.db.prepare('INSERT INTO material_issues(inventory_id,order_id,production_id,qty,unit_cost,user_name) VALUES(?,?,?,?,?,?)')
         .run(inv.id, o.id, ctx.body.production_id || null, qty, inv.unit_cost, ctx.user.name);
     });

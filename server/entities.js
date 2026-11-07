@@ -238,12 +238,22 @@ const ENTITIES = {
     module: 'trade', table: 'trade_terms', title: '贸易术语', pk: 'code', search: ['code', 'name'],
     fields: [f('code', '术语代码', { required: true }), f('name', '中文名称', { required: true }), f('description', '说明', { type: 'textarea' })],
   },
+  warehouse: {
+    module: 'purchase', table: 'warehouses', title: '仓库', search: ['code', 'name', 'keeper'],
+    fields: [
+      f('code', '仓库编码', { required: true }), f('name', '仓库名称', { required: true }),
+      f('type', '类型', { type: 'select', options: ['综合仓', '原料仓', '包材仓', '成品仓', '样品室', '外协仓'] }),
+      f('keeper', '仓管员'), f('address', '地址', { list: false }), f('use_status', '使用状态', { type: 'select', options: USE_STATUS, default: '启用' }),
+      f('remark', '备注', { type: 'textarea', list: false }),
+    ],
+  },
   inventory: {
     module: 'purchase', table: 'inventory', title: '物料库存', search: ['code', 'name', 'category'],
     fields: [
       f('code', '物料编码', { required: true }), f('name', '物料名称', { required: true }),
       f('category', '类别', { type: 'select', options: ['陶土', '釉料', '色料', '包装耗材', '配件', '外购成品', '其它'] }),
-      f('unit', '单位'), f('qty', '库存数量', { type: 'number' }), f('unit_cost', '单位成本¥', { type: 'number' }),
+      f('unit', '单位'), f('qty', '库存数量（直接修改记为库存调整）', { type: 'number' }), f('unit_cost', '单位成本¥', { type: 'number' }),
+      f('warehouse_id', '默认仓库', { type: 'ref', ref: 'warehouse' }),
       f('safety_qty', '安全库存(缺料预警)', { type: 'number' }), f('max_qty', '最高库存(积压预警)', { type: 'number' }), f('remark', '备注', { type: 'textarea', list: false }),
     ],
   },
@@ -273,7 +283,8 @@ const NAV = {
   currency: { tree: [], schemes: [], quick: ['code', 'name'] },
   rate_history: { tree: ['code', 'user_name'], schemes: [['code']], quick: ['code'] },
   trade_term: { tree: [], schemes: [], quick: ['code', 'name'] },
-  inventory: { tree: ['category', 'unit'], schemes: [['category']], quick: ['code', 'name'] },
+  inventory: { tree: ['category', 'unit', 'warehouse_id'], schemes: [['category'], ['warehouse_id', 'category']], quick: ['code', 'name'] },
+  warehouse: { tree: ['type', 'use_status'], schemes: [['type']], quick: ['code', 'name'] },
   log: { tree: ['type', 'module', 'user_name', 'action'], schemes: [['module', 'action'], ['user_name'], ['type']], quick: ['user_name', 'action', 'target', 'ip'] },
   customer_contact: { tree: ['customer_id', 'is_main'], schemes: [['customer_id']], quick: ['name', 'email', 'phone'] },
   customer_mark: { tree: ['customer_id'], schemes: [['customer_id']], quick: ['name'] },
@@ -303,6 +314,7 @@ const REF_LABEL = {
   order: { table: 'orders', label: 'order_no' },
   role: { table: 'roles', label: 'name' },
   inventory: { table: 'inventory', label: "code || ' ' || name" },
+  warehouse: { table: 'warehouses', label: 'name' },
   currency: { table: 'currencies', label: "code || ' ' || name", pk: 'code' },
   trade_term: { table: 'trade_terms', label: "code || ' ' || name", pk: 'code' },
 };

@@ -20,6 +20,11 @@ function audit(db) {
   const check = (name, bad, fmt = (r) => JSON.stringify(r)) => out.push({ name, ok: !bad.length, detail: bad.length ? `${bad.length} 条异常，例：${bad.slice(0, 3).map(fmt).join('；')}` : '' });
 
   check('库存数量不为负', all('SELECT code, qty FROM inventory WHERE qty < -0.0001'));
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='stock_moves'").get()) {
+    check('物料库存 = 库存流水合计', all(`SELECT i.code, i.qty, (SELECT COALESCE(SUM(qty),0) FROM stock_moves WHERE inventory_id=i.id) moves FROM inventory i
+      WHERE ABS(i.qty - (SELECT COALESCE(SUM(qty),0) FROM stock_moves WHERE inventory_id=i.id)) > 0.001`));
+    check('各仓库库存不为负', all(`SELECT inventory_id, warehouse_id, SUM(qty) q FROM stock_moves GROUP BY inventory_id, warehouse_id HAVING q < -0.0001`));
+  }
   check('出货数量不超过订单数量', all(`SELECT oi.id, oi.item_no, oi.qty, SUM(si.qty) shipped FROM order_items oi JOIN shipment_items si ON si.order_item_id=oi.id
     JOIN shipments s ON s.id=si.shipment_id AND s.status<>'已取消' GROUP BY oi.id HAVING shipped > oi.qty`));
   // 合同总额 = 货款 + 加减项（旧库没有加减项表时按 0）/ contract total = goods + charges (0 on older databases)

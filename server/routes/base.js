@@ -361,11 +361,14 @@ function saveEntity(ctx, key, body, id) {
   try {
     if (old) {
       if (cols.length) ctx.db.prepare(`UPDATE ${ent.table} SET ${cols.map((c) => `${c}=?`).join(',')} WHERE ${pk}=?`).run(...cols.map((c) => data[c]), id);
+      // 在物料档案里直接改库存数量，记“库存调整”流水 / manual quantity edits are recorded as stock moves
+      if (key === 'inventory' && data.qty !== undefined) require('../stock').recordAdjust(ctx.db, ctx.db.prepare('SELECT * FROM inventory WHERE id=?').get(id), old.qty, ctx.user.name);
       log(ctx, ent.module, `修改${ent.title}`, id, data);
       return getEntity(ctx, key, id);
     }
     const r = ctx.db.prepare(`INSERT INTO ${ent.table}(${cols.join(',')}) VALUES(${cols.map(() => '?').join(',')})`).run(...cols.map((c) => data[c]));
     const newId = pk === 'id' ? Number(r.lastInsertRowid) : data[pk];
+    if (key === 'inventory' && num(data.qty)) require('../stock').recordAdjust(ctx.db, ctx.db.prepare('SELECT * FROM inventory WHERE id=?').get(newId), 0, ctx.user.name);
     log(ctx, ent.module, `新增${ent.title}`, newId, data);
     return ctx.db.prepare(`SELECT * FROM ${ent.table} WHERE ${pk}=?`).get(newId);
   } catch (e) {
@@ -381,7 +384,8 @@ const DELETE_GUARDS = {
   sample: [['quote_items', 'sample_id', '报价明细'], ['order_items', 'sample_id', '订单明细'], ['sample_send_items', 'sample_id', '送样明细']],
   employee: [['users', 'employee_id', '系统账号'], ['customers', 'salesman_id', '客户']],
   department: [['employees', 'dept_id', '员工']],
-  inventory: [['purchase_items', 'inventory_id', '采购明细']],
+  inventory: [['purchase_items', 'inventory_id', '采购明细'], ['stock_moves', 'inventory_id', '库存流水']],
+  warehouse: [['stock_moves', 'warehouse_id', '库存流水'], ['inventory', 'warehouse_id', '物料（默认仓库）']],
 };
 
 /**

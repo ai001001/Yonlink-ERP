@@ -131,6 +131,16 @@ CREATE TABLE IF NOT EXISTS customer_contacts (id INTEGER PRIMARY KEY, customer_i
 CREATE TABLE IF NOT EXISTS customer_marks (id INTEGER PRIMARY KEY, customer_id INTEGER, name TEXT, front_mark TEXT, side_mark TEXT, inner_mark TEXT, is_default TEXT DEFAULT '否', remark TEXT);
 CREATE TABLE IF NOT EXISTS customer_forwarders (id INTEGER PRIMARY KEY, customer_id INTEGER, agency_id INTEGER, name TEXT, contact TEXT, phone TEXT, email TEXT, port TEXT, remark TEXT);
 CREATE TABLE IF NOT EXISTS customer_banks (id INTEGER PRIMARY KEY, customer_id INTEGER, bank_name TEXT, account_name TEXT, account_no TEXT, swift TEXT, currency TEXT, bank_address TEXT, remark TEXT);
+CREATE TABLE IF NOT EXISTS warehouses (id INTEGER PRIMARY KEY, code TEXT UNIQUE, name TEXT, type TEXT, keeper TEXT, address TEXT, use_status TEXT DEFAULT '启用', remark TEXT);
+CREATE TABLE IF NOT EXISTS stock_moves (id INTEGER PRIMARY KEY, move_no TEXT, type TEXT, inventory_id INTEGER, warehouse_id INTEGER, qty REAL, unit_cost REAL, ref_no TEXT, remark TEXT,
+  user_name TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
+CREATE TABLE IF NOT EXISTS stocktakes (id INTEGER PRIMARY KEY, st_no TEXT UNIQUE, warehouse_id INTEGER, status TEXT DEFAULT '盘点中', remark TEXT, user_name TEXT,
+  created_at TEXT DEFAULT (datetime('now','localtime')), done_at TEXT);
+CREATE TABLE IF NOT EXISTS stocktake_items (id INTEGER PRIMARY KEY, stocktake_id INTEGER, inventory_id INTEGER, book_qty REAL, actual_qty REAL, remark TEXT);
+CREATE TABLE IF NOT EXISTS inspections (id INTEGER PRIMARY KEY, insp_no TEXT UNIQUE, order_id INTEGER, shipment_id INTEGER, type TEXT, inspect_date TEXT, inspector TEXT, aql TEXT,
+  lot_qty INTEGER, sample_size INTEGER, critical INTEGER DEFAULT 0, major INTEGER DEFAULT 0, minor INTEGER DEFAULT 0, result TEXT DEFAULT '待验货', defects TEXT, remark TEXT,
+  user_name TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
+CREATE TABLE IF NOT EXISTS inspection_items (id INTEGER PRIMARY KEY, inspection_id INTEGER, order_item_id INTEGER, item_no TEXT, check_qty INTEGER, defect_qty INTEGER, result TEXT, remark TEXT);
 CREATE TABLE IF NOT EXISTS sample_parts (id INTEGER PRIMARY KEY, sample_id INTEGER, kind TEXT DEFAULT '配件', code TEXT, name TEXT, spec TEXT, qty REAL DEFAULT 1, per TEXT DEFAULT '每只',
   unit TEXT, unit_price REAL DEFAULT 0, supplier_id INTEGER, remark TEXT);
 CREATE TABLE IF NOT EXISTS sample_processes (id INTEGER PRIMARY KEY, sample_id INTEGER, seq INTEGER, name TEXT, supplier_id INTEGER, price REAL DEFAULT 0, remark TEXT);
@@ -410,6 +420,8 @@ const ADDED_COLUMNS = [
   ['shipment_items', 'nw', 'REAL'],
   // 批次4：订单明细选用包装方案 / batch 4: package plan chosen on order lines
   ['order_items', 'package_plan_id', 'INTEGER'],
+  // 批次6：物料默认仓库 / batch 6: default warehouse of an item
+  ['inventory', 'warehouse_id', 'INTEGER'],
 ];
 
 /** 新增系统参数默认值 / Default values for settings added after v1 */
@@ -425,6 +437,22 @@ const DEFAULT_SETTINGS = {
   lockout_minutes: '15',
   ar_writeoff_max: '50',
 };
+
+/**
+ * 仓库与库存流水初始化：没有仓库时建“主仓库”；没有流水的物料把现有库存记为“期初”
+ * Stock bootstrap: create the main warehouse if none; book existing quantities without moves as opening balances.
+ * @param {DatabaseSync} db
+ */
+function ensureStockOpening(db) {
+  let wh = db.prepare("SELECT id FROM warehouses ORDER BY id LIMIT 1").get();
+  if (!wh) wh = { id: Number(db.prepare("INSERT INTO warehouses(code,name,type) VALUES('WH01','主仓库','综合仓')").run().lastInsertRowid) };
+  db.prepare('UPDATE inventory SET warehouse_id=? WHERE warehouse_id IS NULL').run(wh.id);
+  const rows = db.prepare('SELECT i.id, i.qty, i.unit_cost, i.warehouse_id FROM inventory i WHERE ABS(COALESCE(i.qty,0)) > 0.000001 AND NOT EXISTS (SELECT 1 FROM stock_moves m WHERE m.inventory_id=i.id)').all();
+  for (const r of rows) {
+    db.prepare("INSERT INTO stock_moves(move_no,type,inventory_id,warehouse_id,qty,unit_cost,ref_no,remark,user_name) VALUES('OPEN','期初',?,?,?,?,'','系统初始化期初库存','系统')")
+      .run(r.id, r.warehouse_id || wh.id, r.qty, r.unit_cost || 0);
+  }
+}
 
 /**
  * 数据库结构升级：补字段、补参数 / Schema migration: add missing columns and settings.
@@ -465,6 +493,7 @@ function openDb(file, opts = {}) {
       throw e;
     }
   }
+  ensureStockOpening(db);
   return db;
 }
 

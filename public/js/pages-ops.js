@@ -190,7 +190,7 @@
       <div class="panel"><div class="panel-head"><h3>出货与验货</h3>${can('order', 'edit') && !o.risk_lock && !['已出货', '已完成'].includes(o.status) ? '<button class="btn" id="newShip">＋ 安排出货</button>' : ''}</div>
         ${tableHtml(['出货单', '发票', '出货日期', '起运/目的港', '货代', '柜号', '报关单号', '明细', '验货', '状态', ''], o.shipments.map((s) => [esc(s.ship_no), s.invoice_id ? `<a href="#/invoice/${s.invoice_id}">${esc(s.invoice_no)}</a>` : '-', esc(s.ship_date), `${esc(s.port)} → ${esc(s.dest_port)}`, esc(s.forwarder_name), esc(s.container_no), esc(s.customs_no),
     s.items.map((i) => `${esc(i.item_no)}×${i.qty}(${i.cartons}箱/${i.cbm}m³)`).join('<br>'), tag(s.inspection_status) + (s.inspection_note ? `<div class="small muted">${esc(s.inspection_note)}</div>` : ''), tag(s.status),
-    can('order', 'edit') && s.status !== '已出运' && s.status !== '已取消' ? `<button class="btn small" data-ship="${s.id}">更新</button>` : '']))}</div>
+    can('order', 'edit') && s.status !== '已出运' && s.status !== '已取消' ? `<button class="btn small" data-ship="${s.id}">更新</button> <a class="btn small" href="#/inspection/new?order_id=${o.id}&shipment_id=${s.id}">验货单</a>` : '']))}</div>
       <div class="grid2">
         <div class="panel"><div class="panel-head"><h3>关联采购</h3>${can('purchase', 'add') && !o.risk_lock ? `<a class="btn small" href="#/purchase/new?order_id=${o.id}">＋ 新建采购</a>` : ''}</div>
           ${tableHtml(['采购单', '供应商', '状态', '金额¥', '已入库', '已付¥'], o.purchases.map((p) => [can('purchase', 'view') ? `<a href="#/purchase/${p.id}">${esc(p.po_no)}</a>` : esc(p.po_no), esc(p.supplier_name), tag(p.status), money(p.amount), esc(p.received_qty), money(p.paid)]))}</div>
