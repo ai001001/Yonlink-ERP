@@ -1,5 +1,5 @@
 {
-  "name": "yonlink-crm",
+  "name": "yonlink-erp",
   "version": "1.0.0",
   "description": "陶瓷工艺品工贸一体外贸ERP系统 / Ceramic crafts trade-manufacturing ERP",
   "main": "server/index.js",
