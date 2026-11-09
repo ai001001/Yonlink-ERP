@@ -12,7 +12,7 @@ QQ：**3313395633**（学无止境）
 
 演示版**预置约半年的模拟业务数据**（18 个客户、33 款样品及图片、近 400 封往来邮件、40 余张报价、26 张订单、100 余张采购单、460 余条报工等，各版块均有数据）。演示版把同一套后台逻辑打包进浏览器运行（WebAssembly 版 SQLite），无需安装即可体验全部功能（浏览器无法直连邮件服务器，企业邮箱收发需使用服务器版）。注意：演示数据只保存在您当前的浏览器里，不同电脑/浏览器之间不共享，可在登录页点「重置演示数据」恢复初始数据。演示账号密码见登录页表格。**正式多人使用请按下面的方式在服务器上运行。**
 
-每次推送到 `main` 分支，GitHub Actions 会先运行 127 条自动化测试，通过后自动构建并发布演示版（见 `.github/workflows/pages.yml`）。本地构建：`node scripts/build-pages.js`（输出到 `dist/`）。
+每次推送到 `main` 分支，GitHub Actions 会先运行 133 条自动化测试，通过后自动构建并发布演示版（见 `.github/workflows/pages.yml`）。本地构建：`node scripts/build-pages.js`（输出到 `dist/`）。
 
 ## 快速开始
 
@@ -32,7 +32,7 @@ node server/index.js
 ```bash
 node server/index.js --reset          # 重置为演示数据后启动
 node server/index.js --port 9000      # 指定端口
-node --test tests/*.test.js                    # 运行 127 条自动化测试（含安全测试、模拟邮件服务器与半年业务模拟）
+node --test tests/*.test.js                    # 运行 133 条自动化测试（含安全测试、模拟邮件服务器与半年业务模拟）
 node scripts/seed-demo.js                      # 生成约半年的模拟业务数据到 data/erp.db（先停止服务器；原库自动完整备份）
 node scripts/audit-data.js data/erp.db         # 数据一致性审计（26 项账货单状态交叉检查）
 ```
@@ -75,7 +75,7 @@ node scripts/audit-data.js data/erp.db         # 数据一致性审计（26 项�
 |---|---|
 | [docs/01-原型设计.md](docs/01-原型设计.md) | 信息架构、岗位化视图、关键页面线框图、交互规范 |
 | [docs/02-功能设计说明书.md](docs/02-功能设计说明书.md) | 技术架构、16 模块功能点、核心业务规则、数据表 |
-| [docs/03-测试用例.md](docs/03-测试用例.md) | 127 条自动化用例 + 27 条界面用例 + 手工验收清单 |
+| [docs/03-测试用例.md](docs/03-测试用例.md) | 133 条自动化用例 + 27 条界面用例 + 手工验收清单 |
 | [docs/04-测试报告.md](docs/04-测试报告.md) | 三轮测试过程、发现与修复的缺陷、数据核对 |
 | [docs/05-亿星兼容与数据迁移方案.md](docs/05-亿星兼容与数据迁移方案.md) | 亿星功能调研、功能对照与差距、数据迁移方案、分批开发计划 |
 
